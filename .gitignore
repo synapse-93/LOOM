@@ -40,9 +40,13 @@ htmlcov/
 *.swo
 
 # Project Data & Artifacts (Keep raw video and dense meshes out of git)
-data/
+data/**
+!data/**/
+!data/**/.gitkeep
+outputs/**
+!outputs/**/
+!outputs/**/.gitkeep
 datasets/
-outputs/
 scratch/
 *.mp4
 *.mov
@@ -53,3 +57,5 @@ scratch/
 *.stl
 *.mg
 *.blend
+src/*.egg-info/
+

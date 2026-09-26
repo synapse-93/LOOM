@@ -1,0 +1,60 @@
+# LOOM Experiment Benchmark Configuration
+name: "experiment_benchmark"
+input_video: null
+output_dir: "outputs/experiments"
+
+video:
+  sample_interval: 1
+  max_frames: 400
+  target_fps: null
+  min_resolution_width: 1920
+  min_resolution_height: 1080
+
+capture:
+  sharpness_threshold: 120.0
+  max_blur_ratio: 0.2
+  min_overlap_ratio: 0.7
+  enable_coverage_estimation: true
+
+reconstruction:
+  backend: "meshroom"
+  quality: "high"
+  timeout_seconds: 3600
+  workspace_dir: "outputs/experiments/reconstruction"
+
+pointcloud:
+  clean_outliers: true
+  nb_neighbors: 30
+  std_ratio: 1.5
+  voxel_downsample_size: 1.0
+
+mesh:
+  clean_outliers: true
+  close_holes: true
+  max_hole_size: 40
+  poisson_depth: 9
+  target_face_count: 100000
+
+scaling:
+  strategy: "aruco"
+  marker_id: 0
+  marker_size_mm: 50.0
+  dictionary: "DICT_4X4_50"
+
+validation:
+  tolerance_mm: 0.5
+  compute_hausdorff: true
+  ground_truth_dimensions_mm: [50.0, 50.0, 50.0]
+
+printability:
+  check_manifold: true
+  check_watertight: true
+  min_wall_thickness_mm: 1.2
+  max_overhang_angle_deg: 45.0
+  target_bed_size_mm: [220.0, 220.0, 250.0]
+
+export:
+  format: "stl"
+  output_dir: "outputs/experiments/stl"
+  binary: true
+  generate_manifest: true

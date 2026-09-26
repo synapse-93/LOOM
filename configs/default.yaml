@@ -1,0 +1,60 @@
+# LOOM Default Configuration
+name: "default_pipeline"
+input_video: null
+output_dir: "outputs"
+
+video:
+  sample_interval: 1
+  max_frames: 300
+  target_fps: null
+  min_resolution_width: 1280
+  min_resolution_height: 720
+
+capture:
+  sharpness_threshold: 100.0
+  max_blur_ratio: 0.3
+  min_overlap_ratio: 0.6
+  enable_coverage_estimation: true
+
+reconstruction:
+  backend: "meshroom"
+  quality: "medium"
+  timeout_seconds: 1800
+  workspace_dir: null
+
+pointcloud:
+  clean_outliers: true
+  nb_neighbors: 20
+  std_ratio: 2.0
+  voxel_downsample_size: null
+
+mesh:
+  clean_outliers: true
+  close_holes: true
+  max_hole_size: 30
+  poisson_depth: 8
+  target_face_count: 50000
+
+scaling:
+  strategy: "aruco"
+  marker_id: 0
+  marker_size_mm: 50.0
+  dictionary: "DICT_4X4_50"
+
+validation:
+  tolerance_mm: 1.0
+  compute_hausdorff: false
+  ground_truth_dimensions_mm: null
+
+printability:
+  check_manifold: true
+  check_watertight: true
+  min_wall_thickness_mm: 1.2
+  max_overhang_angle_deg: 45.0
+  target_bed_size_mm: [220.0, 220.0, 250.0]
+
+export:
+  format: "stl"
+  output_dir: "outputs/stl"
+  binary: true
+  generate_manifest: true

@@ -2,35 +2,106 @@
 
 **Smartphone Video → Metrically Scaled → Validated → 3D Printable Object**
 
-An engineering and research pipeline designed to transform consumer smartphone video of physical objects into metrically accurate, geometrically validated, and manufacturable 3D printable models (.STL).
+LOOM is an engineering and research pipeline that transforms consumer smartphone video of physical objects into metrically scaled, geometrically validated, and 3D printable objects (.STL).
 
 ---
 
-## Project Structure
+## Current Architecture & Implementation Status
+
+The project strictly distinguishes between **Implemented**, **Scaffolded**, and **Planned** functionality:
+
+| Component / Subsystem | Module Path | Status | Description |
+| :--- | :--- | :--- | :--- |
+| **Package Scaffold & CLI** | `src/loom/` | **Implemented** | Standard src-layout, `python -m loom` entrypoint, logging, paths, subprocess, hashing. |
+| **Configuration System** | `src/loom/config/` | **Implemented** | Typed dataclasses, YAML loader, default/dev/experiment presets in `configs/`. |
+| **Pipeline Runner & Artifacts** | `src/loom/pipeline/` | **Implemented** | Immutable typed artifact models, `PipelineStage` abstraction, and dry-run runner. |
+| **Geometry Utilities** | `src/loom/geometry/` | **Implemented** | 3D coordinate primitives, vector math, bounding box calculation, 4x4 transform matrices. |
+| **Test Suite** | `tests/` | **Implemented** | 35 automated unit/integration tests verifying contracts, config loading, and geometry math. |
+| **Diagnostics** | `scripts/` | **Implemented** | `environment_check.py` diagnostic tool and execution placeholders. |
+| **Video Ingest & Frames** | `src/loom/video/` | *Scaffolded* | Interfaces and contracts defined; streaming extraction planned for Phase 1. |
+| **Capture Quality & Coverage** | `src/loom/capture/` | *Scaffolded* | Sharpness, blur rejection, and guidance interfaces defined; algorithms planned for Phase 1 & 7. |
+| **3D Reconstruction Engine** | `src/loom/reconstruction/` | *Scaffolded* | `ReconstructionEngine` adapter interface, Meshroom & COLMAP adapters; execution planned for Phase 2. |
+| **Point Cloud Processing** | `src/loom/pointcloud/` | *Scaffolded* | Outlier removal, voxel downsampling interfaces defined; implementation planned for Phase 3. |
+| **Mesh Processing & Repair** | `src/loom/mesh/` | *Scaffolded* | Cleaning, hole-filling, normal unification, Poisson meshing interfaces defined; planned for Phase 3. |
+| **Metric Scaling Subsystem** | `src/loom/scaling/` | *Scaffolded* | ArUco detection, calibration, and transform interfaces defined; planned for Phase 4. |
+| **Geometry Validation** | `src/loom/validation/` | *Scaffolded* | Error models, dimension measurement, JSON report generation defined; planned for Phase 5. |
+| **Printability Analysis** | `src/loom/printability/` | *Scaffolded* | Manifold, watertight, thickness, overhang checks defined; planned for Phase 6. |
+| **Manufacturing Export** | `src/loom/export/` | *Scaffolded* | Binary STL export, cryptographic manifest, and summary report generator defined; planned for Phase 6. |
+
+---
+
+## Directory Layout
 
 ```
-├── AGENTS.md                  # Project constitution & agent operating guidelines
-├── .agents/
-│   └── rules/                 # Core technical rules
-│       ├── architecture.md    # Modular pipeline design & interfaces
-│       ├── python.md          # Python runtime, dependencies & standards
-│       ├── reconstruction.md  # Photogrammetry backend adapter rules
-│       ├── testing.md         # Testing philosophy & fixture guidelines
-│       └── research.md        # Research integrity & measurement rules
-├── project/
-│   ├── CONTEXT.md             # Current state snapshot (read first)
-│   ├── ROADMAP.md             # Staged 11-phase development roadmap
-│   ├── DECISIONS.md           # Architecture Decision Records (ADRs)
-│   ├── EXPERIMENTS.md         # Empirical experiment logs & schema
-│   ├── ISSUES.md              # Active blockers, limitations & technical debt
-│   └── CHANGELOG.md           # Iteration-by-iteration changelog
+LOOM/
+├── .agents/                    # Agent constitution, operating rules & guidelines
+│   └── rules/
+├── configs/                    # Validated YAML configurations
+│   ├── default.yaml            # Baseline production configuration
+│   ├── development.yaml        # Fast local iteration settings
+│   └── experiment.yaml         # High-precision benchmark settings
+├── data/                       # Ingest & intermediate data storage (git-ignored)
+│   ├── raw/                    # Raw input smartphone video files
+│   ├── intermediate/           # Extracted keyframes & temporary assets
+│   └── processed/              # Processed datasets
+├── docs/                       # Architecture diagrams and technical notes
+│   ├── architecture/
+│   ├── demo/
+│   └── experiments/
+├── outputs/                    # Pipeline outputs (git-ignored)
+│   ├── reconstructions/        # Raw photogrammetry outputs
+│   ├── meshes/                 # Cleaned and scaled meshes
+│   ├── stl/                    # Final manufacturing-ready STL models
+│   └── reports/                # Validation and printability reports
+├── project/                    # Project memory and management system
+│   ├── CHANGELOG.md            # Chronological iteration log
+│   ├── CONTEXT.md              # Current project state snapshot (read first)
+│   ├── DECISIONS.md            # Architecture Decision Records (ADR-001 to ADR-004)
+│   ├── EXPERIMENTS.md          # Empirical experiment logs
+│   ├── ISSUES.md               # Blockers, limitations, and technical debt
+│   └── ROADMAP.md              # Staged 11-phase development roadmap
+├── scripts/                    # Diagnostic and utility scripts
+│   ├── benchmark.py            # Benchmark execution script (scaffold)
+│   ├── environment_check.py    # Python runtime and toolchain diagnostic
+│   ├── generate_marker.py      # ArUco marker generator (scaffold)
+│   └── generate_test_video.py  # Test video generator (scaffold)
+├── src/loom/                   # Core application source package
+│   ├── capture/                # Quality and coverage guidance
+│   ├── config/                 # Typed configuration models and YAML loader
+│   ├── export/                 # STL export and build manifests
+│   ├── geometry/               # 3D math and bounding box primitives
+│   ├── mesh/                   # Mesh repair and surface reconstruction
+│   ├── pipeline/               # Runner, stages, and typed artifacts
+│   ├── pointcloud/             # Outlier filtering and downsampling
+│   ├── printability/           # 2-manifold and watertightness checks
+│   ├── reconstruction/         # Replaceable photogrammetry engine adapters
+│   ├── scaling/                # ArUco fiducial metric calibration
+│   ├── utils/                  # Subprocess, hashing, paths, and logging
+│   ├── validation/             # Ground-truth dimensional error calculation
+│   └── video/                  # Ingest, metadata, and frame extraction
+├── tests/                      # Automated test suite
+│   ├── fixtures/               # Test fixtures (meshes, images, videos)
+│   ├── integration/            # Multi-module and pipeline integration tests
+│   └── unit/                   # Deterministic unit tests
+├── pyproject.toml              # Build system and package specification
+└── README.md                   # This document
 ```
 
 ---
 
-## Agent Quickstart
+## Quickstart
 
-All AI agents and contributors must follow the operating procedure in [`AGENTS.md`](file:///c:/Users/adise/OneDrive/Documents/Loom/AGENTS.md):
-1. **Read Current State**: Check [`project/CONTEXT.md`](file:///c:/Users/adise/OneDrive/Documents/Loom/project/CONTEXT.md).
-2. **Review Applicable Rules**: Consult relevant files in [`.agents/rules/`](file:///c:/Users/adise/OneDrive/Documents/Loom/.agents/rules/).
-3. **Follow the Workflow**: `READ STATE → INSPECT → PLAN → IMPLEMENT → TEST → VERIFY → UPDATE STATE → REPORT`.
+### 1. Environment Verification
+```powershell
+.venv\Scripts\python scripts/environment_check.py
+```
+
+### 2. Run Test Suite
+```powershell
+.venv\Scripts\python -m pytest tests/ -v
+```
+
+### 3. CLI Execution (Dry-Run Mode)
+```powershell
+.venv\Scripts\python -m loom --config configs/default.yaml --dry-run
+```

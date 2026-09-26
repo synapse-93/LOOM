@@ -6,11 +6,7 @@ This document tracks active blockers, known limitations, technical debt, researc
 
 ## 1. Active Blockers
 
-- **ISSUE-BLK-001: Python 3.10.11 Binary Missing from Registered Path on Host**
-  - **Discovered**: 2026-09-26 (Repository inspection)
-  - **Description**: The Windows `py` launcher registry lists `Python 3.10.11` mapped to `C:\Users\adise\AppData\Local\Python\pythoncore-3.10-64\python.exe`, but this executable path does not exist on disk. The active system interpreter in PATH is Python 3.14.7 (`C:\Python314\python.exe`).
-  - **Impact**: Running `py -3.10 -m venv .venv` fails with "The system cannot find the file specified". Furthermore, Python 3.14 cannot be used as an alternative because pre-compiled binary wheels for `pymeshlab` and `open3d` do not exist for Python 3.14.
-  - **Required Action**: Install Python 3.10.11 64-bit on the host machine (e.g. via `winget install Python.Python.3.10` or official Python installer) before initializing `.venv` for Phase 1.
+*No active blockers for immediate next milestone (Phase 1: Video Ingest & Frame Processing).*
 
 ---
 
@@ -56,3 +52,8 @@ This document tracks active blockers, known limitations, technical debt, researc
   - **Resolved**: 2026-09-26 (Iteration 000)
   - **Description**: Workspace was an empty repository with no governance or rules.
   - **Resolution**: Created `AGENTS.md`, `.agents/rules/`, and `project/` documentation structures establishing project memory and rules.
+
+- **ISSUE-RES-001: Python 3.10.11 Environment Setup & Toolchain Activation**
+  - **Resolved**: 2026-09-26 (Iteration 001)
+  - **Description**: Windows `py` launcher registry listed Python 3.10 at a non-existent path on disk.
+  - **Resolution**: Installed Python 3.10.11 via `winget`, created isolated virtual environment `.venv`, installed minimal dependencies (`pyyaml`, `pytest`), installed package in editable mode, and verified complete test suite.

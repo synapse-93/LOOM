@@ -1,0 +1,60 @@
+# LOOM Development Configuration (Rapid Local Iteration)
+name: "development_pipeline"
+input_video: null
+output_dir: "outputs/dev"
+
+video:
+  sample_interval: 2
+  max_frames: 60
+  target_fps: 15.0
+  min_resolution_width: 1280
+  min_resolution_height: 720
+
+capture:
+  sharpness_threshold: 80.0
+  max_blur_ratio: 0.4
+  min_overlap_ratio: 0.5
+  enable_coverage_estimation: true
+
+reconstruction:
+  backend: "meshroom"
+  quality: "low"
+  timeout_seconds: 600
+  workspace_dir: "outputs/dev/reconstruction"
+
+pointcloud:
+  clean_outliers: true
+  nb_neighbors: 16
+  std_ratio: 2.0
+  voxel_downsample_size: 2.0
+
+mesh:
+  clean_outliers: true
+  close_holes: true
+  max_hole_size: 20
+  poisson_depth: 7
+  target_face_count: 20000
+
+scaling:
+  strategy: "aruco"
+  marker_id: 0
+  marker_size_mm: 50.0
+  dictionary: "DICT_4X4_50"
+
+validation:
+  tolerance_mm: 2.0
+  compute_hausdorff: false
+  ground_truth_dimensions_mm: null
+
+printability:
+  check_manifold: true
+  check_watertight: true
+  min_wall_thickness_mm: 1.0
+  max_overhang_angle_deg: 45.0
+  target_bed_size_mm: [220.0, 220.0, 250.0]
+
+export:
+  format: "stl"
+  output_dir: "outputs/dev/stl"
+  binary: true
+  generate_manifest: true
