@@ -30,6 +30,18 @@ This document tracks active blockers, known limitations, technical debt, researc
   - **Impact**: Attempting to create a virtual environment with generic `python -m venv` will build a Python 3.14 environment that will fail wheel installations.
   - **Mitigation**: Always create the project virtual environment explicitly using `py -3.10 -m venv .venv`.
 
+- **ISSUE-LIM-004: Video Codec FourCC Reporting Across Operating Systems**
+  - **Discovered**: 2026-09-26 (Phase 1 Ingest Implementation)
+  - **Description**: OpenCV `CAP_PROP_FOURCC` returns integer FourCC codes that can produce non-printable characters or 0 on Windows Media Foundation (MSMF) backends.
+  - **Impact**: Codec string in `metadata.json` may report `"unknown"` or generic container type for certain smartphone containers.
+  - **Mitigation**: `extract_video_metadata` safely filters non-printable characters and gracefully falls back to `"unknown"`, preserving all other critical stream parameters (FPS, frame count, width, height, duration).
+
+- **ISSUE-LIM-005: Global Redundancy Thumbnail Sensitivity to Scene Background**
+  - **Discovered**: 2026-09-26 (Phase 1 Redundancy Filter Tuning)
+  - **Description**: When a small target object moves against a large static background, global thumbnail mean difference is only ~2-3% (similarity 0.97-0.98). A threshold of 0.95 would discard valid orbital camera steps.
+  - **Impact**: Strict similarity thresholds could prematurely discard useful viewpoint frames.
+  - **Mitigation**: Standardized `redundancy_threshold` default to 0.98 and preserved full configurability via `CaptureConfig`.
+
 ---
 
 ## 3. Technical Debt

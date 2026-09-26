@@ -10,6 +10,7 @@ This document records the architectural and engineering decisions accepted for V
 - [ADR-002: Selection of Meshroom / AliceVision CLI as Initial Reconstruction Backend](#adr-002-selection-of-meshroom--alicevision-cli-as-initial-reconstruction-backend)
 - [ADR-003: Subprocess Isolation and Adapter Pattern for External Reconstruction Tools](#adr-003-subprocess-isolation-and-adapter-pattern-for-external-reconstruction-tools)
 - [ADR-004: Known-Size Reference Marker (ArUco) for Development Metric Scaling](#adr-004-known-size-reference-marker-aruco-for-development-metric-scaling)
+- [ADR-005: Deterministic Optical Quality Assessment and Thumbnail Redundancy Filtering](#adr-005-deterministic-optical-quality-assessment-and-thumbnail-redundancy-filtering)
 
 ---
 
@@ -84,3 +85,21 @@ This document records the architectural and engineering decisions accepted for V
 - **Consequences**:
   - Capture protocol during development requires the user to place an ArUco marker in the scene alongside the target object.
   - The marker geometry must later be segmented out or trimmed from the final printable object mesh if it contacts the object.
+
+---
+
+## ADR-005: Deterministic Optical Quality Assessment and Thumbnail Redundancy Filtering
+
+- **Status**: ACCEPTED
+- **Date**: 2026-09-26
+- **Decision**: Adopt Laplacian variance for blur detection, grayscale mean/standard deviation for exposure/contrast validation, and 64x64 grayscale thumbnail mean absolute difference for inter-frame redundancy filtering.
+- **Reason**:
+  - Computational efficiency: These metrics require basic matrix operations via NumPy and OpenCV, executing in milliseconds per frame without GPU requirements or neural network dependencies.
+  - Determinism: Given identical frame input, the quality scoring and accept/reject decisions are 100% reproducible.
+  - Redundancy filtering prevents feeding hundreds of static or near-static consecutive frames into photogrammetry, which would explode bundle adjustment computation time without increasing geometric reconstruction quality.
+  - A 64x64 normalized thumbnail captures overall scene composition and viewpoint shifts while being insensitive to high-frequency sensor noise.
+- **Alternatives Considered**:
+  - *Optical Flow (Lucas-Kanade / Farneback)*: Accurate but substantially slower for long 4K/1080p video sequences. Deferred to later optimization phases if simple difference metrics prove insufficient on difficult footage.
+  - *Deep learning quality models (e.g., BRISQUE, KonIQ, NIMA)*: Heavyweight dependencies (PyTorch/TensorFlow) violating Phase 1 dependency rules, non-deterministic across devices, and unnecessary for basic blur/exposure gating.
+- **Consequences**:
+  - Default thresholds (`sharpness_threshold=100.0`, `min_brightness=30.0`, `max_brightness=235.0`, `min_contrast=15.0`, `redundancy_threshold=0.98`) provide robust initial filtering but remain fully user-configurable via `CaptureConfig` for challenging lighting environments.

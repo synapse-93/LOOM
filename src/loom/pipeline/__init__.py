@@ -15,15 +15,23 @@ from loom.pipeline.artifacts import (
     ValidationArtifact,
     VideoArtifact,
 )
-from loom.pipeline.runner import PipelineRunner
-from loom.pipeline.stages import PipelineStage
+from loom.pipeline.runner import Phase1Result, PipelineRunner, run_phase1_pipeline
+from loom.pipeline.stages import (
+    CaptureQualityStage,
+    FrameExtractionStage,
+    PipelineStage,
+    VideoIngestStage,
+)
 
 __all__ = [
     "BaseArtifact",
     "CaptureAnalysisArtifact",
+    "CaptureQualityStage",
     "ExportArtifact",
+    "FrameExtractionStage",
     "FrameSetArtifact",
     "MeshArtifact",
+    "Phase1Result",
     "PipelineRunner",
     "PipelineStage",
     "PointCloudArtifact",
@@ -32,4 +40,6 @@ __all__ = [
     "ScaledMeshArtifact",
     "ValidationArtifact",
     "VideoArtifact",
+    "VideoIngestStage",
+    "run_phase1_pipeline",
 ]

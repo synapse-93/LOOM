@@ -33,17 +33,24 @@ Phase 10 <── Phase 9 <── Phase 8 <── Phase 7 <── Phase 6 <──
 ---
 
 ### Phase 1: Reliable Video & Frame Processing Pipeline
-- **Status**: NOT STARTED (Next Milestone)
+- **Status**: COMPLETE
 - **Objective**: Build a robust, deterministic video ingest and keyframe selection module.
-- **Prerequisites**: Phase 0 complete; `.venv` configured with Python 3.10.11; `opencv-python` installed.
-- **Expected Deliverables**:
-  - `src/video2print/video/`: Video decoder, duration/framerate validator, frame extractor with timestamp indexing.
-  - `src/video2print/frames/`: Quality assessor computing sharpness (Laplacian variance), exposure histograms, and inter-frame motion filtering to discard redundant/blurry frames.
-  - Unit tests in `tests/unit/test_video_ingest.py` and `tests/unit/test_frame_selection.py`.
-- **Measurable Completion Criteria**:
-  - Given a test video, successfully extracts frames into structured output directory.
-  - Blurry frames (Laplacian variance below threshold) are demonstrably filtered out.
-  - 100% of unit tests pass with zero warnings.
+- **Prerequisites**: Phase 0 complete; `.venv` configured with Python 3.10.11; `opencv-python`, `numpy`, `tqdm` installed.
+- **Delivered**:
+  - `src/loom/video/metadata.py`: Robust container metadata parsing and duration estimation.
+  - `src/loom/video/ingest.py`: File validation and `VideoArtifact` generation.
+  - `src/loom/video/frames.py`: Streaming sequential frame extraction, configurable sampling interval, max frames, JPEG quality, and `manifest.json`.
+  - `src/loom/capture/quality.py`: Deterministic Laplacian variance sharpness, grayscale mean brightness, grayscale std contrast, and 64x64 thumbnail redundancy filtering.
+  - `src/loom/capture/coverage.py` & `guidance.py`: Viewpoint diversity scoring and actionable user feedback notes.
+  - `src/loom/pipeline/runner.py`: Phase 1 orchestration writing `frames/{raw,selected}`, `reports/{metadata.json,capture_analysis.json}`, and `logs/pipeline.log`.
+  - CLI `python -m loom --video <path>` with concise summary terminal output.
+  - `scripts/generate_test_video.py`: Synthetic test video generator.
+  - 52 passing tests covering all unit and integration behaviors.
+- **Measurable Completion Criteria Verified**:
+  - Successfully ingests and extracts frames from video without loading entire video into memory.
+  - Blurry, underexposed, overexposed, low contrast, and redundant frames demonstrably filtered.
+  - Generates machine-readable `manifest.json`, `metadata.json`, and `capture_analysis.json`.
+  - 100% of unit and integration tests pass with zero warnings.
 
 ---
 

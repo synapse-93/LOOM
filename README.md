@@ -14,12 +14,12 @@ The project strictly distinguishes between **Implemented**, **Scaffolded**, and 
 | :--- | :--- | :--- | :--- |
 | **Package Scaffold & CLI** | `src/loom/` | **Implemented** | Standard src-layout, `python -m loom` entrypoint, logging, paths, subprocess, hashing. |
 | **Configuration System** | `src/loom/config/` | **Implemented** | Typed dataclasses, YAML loader, default/dev/experiment presets in `configs/`. |
-| **Pipeline Runner & Artifacts** | `src/loom/pipeline/` | **Implemented** | Immutable typed artifact models, `PipelineStage` abstraction, and dry-run runner. |
+| **Pipeline Runner & Artifacts** | `src/loom/pipeline/` | **Implemented** | Immutable typed artifact models, `PipelineStage` abstraction, and Phase 1 pipeline runner. |
+| **Video Ingest & Frames** | `src/loom/video/` | **Implemented** | Video container validation, stream metadata extraction, streaming frame extraction & manifest. |
+| **Capture Quality & Coverage** | `src/loom/capture/` | **Implemented** | Laplacian sharpness, exposure/contrast gating, thumbnail redundancy filter, and capture guidance. |
 | **Geometry Utilities** | `src/loom/geometry/` | **Implemented** | 3D coordinate primitives, vector math, bounding box calculation, 4x4 transform matrices. |
-| **Test Suite** | `tests/` | **Implemented** | 35 automated unit/integration tests verifying contracts, config loading, and geometry math. |
-| **Diagnostics** | `scripts/` | **Implemented** | `environment_check.py` diagnostic tool and execution placeholders. |
-| **Video Ingest & Frames** | `src/loom/video/` | *Scaffolded* | Interfaces and contracts defined; streaming extraction planned for Phase 1. |
-| **Capture Quality & Coverage** | `src/loom/capture/` | *Scaffolded* | Sharpness, blur rejection, and guidance interfaces defined; algorithms planned for Phase 1 & 7. |
+| **Test Suite** | `tests/` | **Implemented** | 52 automated unit/integration tests verifying ingest, frames, quality, contracts, and pipeline. |
+| **Diagnostics & Tools** | `scripts/` | **Implemented** | `environment_check.py` and `generate_test_video.py` synthetic video generator. |
 | **3D Reconstruction Engine** | `src/loom/reconstruction/` | *Scaffolded* | `ReconstructionEngine` adapter interface, Meshroom & COLMAP adapters; execution planned for Phase 2. |
 | **Point Cloud Processing** | `src/loom/pointcloud/` | *Scaffolded* | Outlier removal, voxel downsampling interfaces defined; implementation planned for Phase 3. |
 | **Mesh Processing & Repair** | `src/loom/mesh/` | *Scaffolded* | Cleaning, hole-filling, normal unification, Poisson meshing interfaces defined; planned for Phase 3. |
@@ -104,4 +104,13 @@ LOOM/
 ### 3. CLI Execution (Dry-Run Mode)
 ```powershell
 .venv\Scripts\python -m loom --config configs/default.yaml --dry-run
+```
+
+### 4. Phase 1 Pipeline Run (Video Ingest & Keyframe Selection)
+```powershell
+# Run against a smartphone video:
+.venv\Scripts\python -m loom --video path/to/video.mp4
+
+# Run with development settings:
+.venv\Scripts\python -m loom --config configs/development.yaml --video path/to/video.mp4
 ```

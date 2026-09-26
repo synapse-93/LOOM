@@ -40,6 +40,7 @@ def _parse_dict_to_config(data: dict[str, Any]) -> LoomConfig:
             target_fps=float(v["target_fps"]) if v.get("target_fps") is not None else None,
             min_resolution_width=int(v.get("min_resolution_width", config.video.min_resolution_width)),
             min_resolution_height=int(v.get("min_resolution_height", config.video.min_resolution_height)),
+            jpeg_quality=int(v.get("jpeg_quality", config.video.jpeg_quality)),
         )
 
     if "capture" in data and isinstance(data["capture"], dict):
@@ -49,6 +50,10 @@ def _parse_dict_to_config(data: dict[str, Any]) -> LoomConfig:
             max_blur_ratio=float(c.get("max_blur_ratio", config.capture.max_blur_ratio)),
             min_overlap_ratio=float(c.get("min_overlap_ratio", config.capture.min_overlap_ratio)),
             enable_coverage_estimation=bool(c.get("enable_coverage_estimation", config.capture.enable_coverage_estimation)),
+            min_brightness=float(c.get("min_brightness", config.capture.min_brightness)),
+            max_brightness=float(c.get("max_brightness", config.capture.max_brightness)),
+            min_contrast=float(c.get("min_contrast", config.capture.min_contrast)),
+            redundancy_threshold=float(c.get("redundancy_threshold", config.capture.redundancy_threshold)),
         )
 
     if "reconstruction" in data and isinstance(data["reconstruction"], dict):

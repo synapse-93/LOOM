@@ -34,14 +34,27 @@ def test_video_file_validation(tmp_path: Path) -> None:
     assert VideoIngestor.validate_video_file(valid) is True
 
 
-def test_frame_extractor_scaffold_raises_not_implemented() -> None:
-    """Verify FrameExtractor extract method raises NotImplementedError for scaffold."""
+def test_frame_extractor_missing_file_raises(tmp_path: Path) -> None:
+    """Verify FrameExtractor raises FileNotFoundError when source video does not exist."""
     extractor = FrameExtractor(config=VideoConfig())
-    with pytest.raises(NotImplementedError):
-        extractor.extract(Path("dummy.mp4"), Path("outputs/frames"))
+    with pytest.raises(FileNotFoundError, match="Source video not found"):
+        extractor.extract(tmp_path / "missing.mp4", tmp_path / "outputs")
 
 
-def test_extract_video_metadata_raises_not_implemented() -> None:
-    """Verify extract_video_metadata raises NotImplementedError for scaffold."""
-    with pytest.raises(NotImplementedError):
-        extract_video_metadata(Path("dummy.mp4"))
+def test_extract_video_metadata_errors(tmp_path: Path) -> None:
+    """Verify extract_video_metadata raises expected errors for missing/corrupt files."""
+    # Missing file
+    with pytest.raises(FileNotFoundError, match="Video file not found"):
+        extract_video_metadata(tmp_path / "missing.mp4")
+
+    # Empty file
+    empty = tmp_path / "empty.mp4"
+    empty.write_bytes(b"")
+    with pytest.raises(ValueError, match="empty"):
+        extract_video_metadata(empty)
+
+    # Corrupt/non-video file
+    corrupt = tmp_path / "corrupt.mp4"
+    corrupt.write_bytes(b"not a valid video container content at all")
+    with pytest.raises(ValueError, match="OpenCV could not initialize a readable video stream"):
+        extract_video_metadata(corrupt)

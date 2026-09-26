@@ -4,6 +4,34 @@ This log records chronological development iterations. Every agent completing me
 
 ---
 
+## Iteration 002 — Phase 1: Video Ingest, Frame Extraction & Capture Quality
+- **Date**: 2026-09-26
+- **Milestone**: Phase 1 — Video Ingest, Frame Extraction & Capture Quality (COMPLETED)
+- **Changes Implemented**:
+  - Installed and pinned Phase 1 dependencies in Python 3.10.11 `.venv`: `numpy==2.2.6`, `opencv-python==5.0.0.93`, `tqdm==4.70.1`.
+  - Implemented OpenCV-based video validation and container metadata extraction in `src/loom/video/metadata.py` with robust duration calculation, stream property validation, FourCC decoding, and deterministic `try...finally: cap.release()`.
+  - Implemented `VideoIngestor` in `src/loom/video/ingest.py`, validating container formats and producing verified `VideoArtifact`.
+  - Implemented sequential streaming frame extraction in `src/loom/video/frames.py` with configurable sampling interval, target FPS, max_frames, JPEG quality encoding, deterministic filenames (`frame_{idx:06d}.jpg`), and machine-readable `manifest.json`. Zero whole-video RAM retention.
+  - Implemented deterministic optical quality analysis in `src/loom/capture/quality.py`:
+    - Sharpness via Laplacian variance on grayscale images.
+    - Brightness via grayscale mean (with configurable min/max exposure rejection).
+    - Contrast via grayscale standard deviation (with configurable min contrast threshold).
+    - Redundancy filtering via 64x64 thumbnail mean absolute difference against previous accepted frame (`redundancy_threshold=0.98`).
+  - Implemented 2D viewpoint diversity estimation in `src/loom/capture/coverage.py` and actionable capture guidance generation in `src/loom/capture/guidance.py`.
+  - Implemented Phase 1 pipeline execution in `src/loom/pipeline/runner.py` with standardized output directory structure (`outputs/runs/<run_id>/frames/{raw,selected}`, `reports/{metadata.json,capture_analysis.json}`, `logs/pipeline.log`).
+  - Extended CLI (`src/loom/__main__.py`) supporting `--video`, `--config`, `--output-dir`, and outputting rich terminal execution summaries.
+  - Completed synthetic test video generator `scripts/generate_test_video.py` producing controlled variations (normal, blurred, dark, bright, redundant frames).
+  - Built comprehensive unit tests (`test_metadata.py`, `test_frames.py`, `test_quality.py`) and end-to-end integration tests (`test_phase1_pipeline.py`).
+- **Verification**:
+  - `pytest tests/ -v` passed all 52 tests (100% pass rate).
+  - Synthetic video generation tested: 60 frames @ 30 FPS, 640x480 generated and verified.
+  - CLI execution verified: `python -m loom --video data/raw/synthetic_test.mp4` successfully ran end-to-end, extracted 60 frames, filtered defects, copied 5 high-quality keyframes to `frames/selected/`, and generated both JSON reports and log file.
+  - Memory & resource safety verified: streaming extraction consumes constant minimal memory (< 80 MB) without accumulative memory growth.
+- **Next Step**:
+  - Phase 2 Planning: Multi-View 3D Reconstruction Integration (Meshroom / AliceVision CLI adapter).
+
+---
+
 ## Iteration 001 — Complete Application Scaffold & Test Hierarchy
 - **Date**: 2026-09-26
 - **Milestone**: Phase 0 — Application Scaffold & Architecture

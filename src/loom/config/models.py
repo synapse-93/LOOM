@@ -16,6 +16,7 @@ class VideoConfig:
     target_fps: Optional[float] = None
     min_resolution_width: int = 1280
     min_resolution_height: int = 720
+    jpeg_quality: int = 95
 
 
 @dataclass
@@ -26,6 +27,10 @@ class CaptureConfig:
     max_blur_ratio: float = 0.3
     min_overlap_ratio: float = 0.6
     enable_coverage_estimation: bool = True
+    min_brightness: float = 30.0
+    max_brightness: float = 235.0
+    min_contrast: float = 15.0
+    redundancy_threshold: float = 0.98
 
 
 @dataclass
