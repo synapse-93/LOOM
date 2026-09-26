@@ -10,6 +10,7 @@ from loom import __version__
 from loom.config.loader import load_config
 from loom.config.models import LoomConfig
 from loom.pipeline.runner import run_phase1_pipeline
+from loom.reconstruction.models import ReconstructionStatus
 from loom.utils.logging import get_logger, setup_logging
 
 logger = get_logger("loom.cli")
@@ -152,24 +153,47 @@ def main(argv: list[str] | None = None) -> int:
             print("=" * 65 + "\n")
         else:
             recon = result.reconstruction_result
+            status_name = recon.status.value.upper() if recon.status else ("SUCCESS" if recon.success else "FAILED")
             print("\n" + "=" * 65)
             print("LOOM: Phase 2 3D Reconstruction Summary")
             print("=" * 65)
             print(f"Backend:                {recon.backend}")
-            print(f"Status:                 {'SUCCESS' if recon.success else 'FAILED'}")
+            print(f"Status:                 {status_name}")
             print(f"Input Frames:           {recon.input_frames_count}")
             reg_cam = f"{recon.registered_cameras_count}" if recon.registered_cameras_count is not None else "N/A"
             print(f"Registered Cameras:     {reg_cam}")
             reg_ratio = f"{recon.registration_ratio:.1%}" if recon.registration_ratio is not None else "N/A"
             print(f"Registration Ratio:     {reg_ratio}")
-            print(f"Point Cloud:            {recon.point_cloud_path.name if recon.point_cloud_path else 'None'}")
+            sparse_name = recon.sparse_reconstruction_path.name if recon.sparse_reconstruction_path else "None"
+            print(f"Sparse SFM Cloud:       {sparse_name}")
+            dense_name = (
+                recon.dense_point_cloud_path.name
+                if recon.dense_point_cloud_path
+                else (recon.point_cloud_path.name if recon.point_cloud_path else "None")
+            )
+            print(f"Dense Point Cloud:      {dense_name}")
             print(f"Mesh Output:            {recon.mesh_path if recon.mesh_path else 'None'}")
             print(f"Execution Time:         {recon.execution_time_seconds:.2f} seconds")
+            print(f"Workspace:              {recon.workspace_path if recon.workspace_path else 'N/A'}")
+            print(f"Log File:               {recon.log_path if recon.log_path else 'None'}")
             print(f"Reconstruction Report:  {result.reconstruction_report_path}")
             if recon.error_message:
                 print(f"Error Details:          {recon.error_message}")
             print("-" * 65)
-            status_text = "RECONSTRUCTION COMPLETED (Raw Mesh Generated)" if recon.success else "RECONSTRUCTION FAILED"
+            if recon.status == ReconstructionStatus.SUCCESS or recon.success:
+                status_text = "RECONSTRUCTION COMPLETED (Raw Mesh Generated)"
+            elif recon.status == ReconstructionStatus.PARTIAL:
+                status_text = "RECONSTRUCTION PARTIAL (Point Cloud/Poses Generated, Mesh Missing)"
+            elif recon.status == ReconstructionStatus.BINARY_UNAVAILABLE:
+                status_text = "RECONSTRUCTION BLOCKED (Backend Executable Unavailable on Host)"
+            elif recon.status == ReconstructionStatus.TIMEOUT:
+                status_text = "RECONSTRUCTION TIMED OUT"
+            elif recon.status == ReconstructionStatus.INVALID_INPUT:
+                status_text = "RECONSTRUCTION FAILED (Invalid Inputs)"
+            elif recon.status == ReconstructionStatus.ARTIFACT_MISSING:
+                status_text = "RECONSTRUCTION FAILED (Expected Output Artifact Missing)"
+            else:
+                status_text = "RECONSTRUCTION FAILED"
             print(f"Status: {status_text}")
             print("=" * 65 + "\n")
 

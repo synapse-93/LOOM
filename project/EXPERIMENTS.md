@@ -61,6 +61,7 @@ When documenting an experiment, use this exact structure:
 | EXP-001 | 2026-09-26 | Synthetic Test Pattern (640x480) | 60 / 5 | Phase 1 Only | N/A (Pre-reconstruction) | N/A | N/A | **VERIFIED** |
 | EXP-002 | 2026-09-26 | Host Environment & Mocked Meshroom | 3 / 3 (Mocked) | Meshroom (Mocked) | N/A | N/A | N/A | **VERIFIED** |
 | EXP-003 | 2026-09-26 | Redundancy Filter Audit | 60 / 5 | Phase 1 Quality | N/A | N/A | N/A | **VERIFIED** |
+| EXP-004 | 2026-09-26 | Phase 2 Graceful Degradation Audit | 60 / 5 | Meshroom (Absent) | N/A (Blocked on binary) | N/A | N/A | **VERIFIED** |
 
 ---
 
@@ -148,4 +149,22 @@ When documenting an experiment, use this exact structure:
 - **Conclusion & Next Steps**:
   - Redundancy algorithm is effective, lightweight (O(1) memory, < 1ms per frame), and correctly discards redundant camera pauses while preserving distinct viewpoints.
   - Retain current 64x64 thumbnail difference implementation without introducing heavy optical flow dependencies.
+
+---
+
+### EXP-004: Phase 2 Pipeline Graceful Degradation & Contract Audit
+- **Date**: 2026-09-26
+- **Target Command**: `.venv\Scripts\python -m loom --video data/raw/synthetic_test.mp4 --reconstruct`
+- **Host Photogrammetry State**: No `meshroom_batch` binary installed on system PATH or Program Files (`ISSUE-BLK-002`).
+- **Observed Behavior**:
+  - Phase 1 completed successfully: 60 frames extracted, 5 keyframes accepted into `frames/selected/`.
+  - Phase 2 detected requested backend (`meshroom`) was unavailable on host.
+  - Graceful degradation: Pipeline did not crash or raise uncaught exception.
+  - Failure classification: Result correctly categorized as `status: BINARY_UNAVAILABLE`.
+  - Terminal summary: Displayed `Status: RECONSTRUCTION BLOCKED (Backend Executable Unavailable on Host)` with zero hallucinated point counts or registration ratios (`N/A`).
+  - Report output: Valid `reports/reconstruction.json` written with complete schema: `status: "binary_unavailable"`, `success: false`, `mesh_generated: false`, `input_frames: 5`, `registered_cameras: null`, `registration_ratio: null`, `point_count: null`, `workspace_path: ...`.
+- **Conclusion & Next Steps**:
+  - Phase 2 contracts, failure classifications, and pipeline integration verified empirically on real synthetic pipeline execution.
+  - Live reconstruction remains blocked pending installation of Meshroom 2023.3 binary.
+
 

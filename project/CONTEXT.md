@@ -3,8 +3,8 @@
 **Project**: LOOM / VIDEO2PRINT  
 **Objective**: Transition an ordinary smartphone video into a metrically scaled, validated, 3D printable object (.STL) with measurable manufacturing readiness.  
 **Last Updated**: 2026-09-26  
-**Current Iteration**: 003 (Phase 1.5: Verification & Hardening, Phase 2: Meshroom 3D Reconstruction Adapter)  
-**Current Milestone**: Phase 2 — Multi-View 3D Reconstruction Integration (Adapter IMPLEMENTED & VERIFIED with mocked subprocess; Live execution BLOCKED pending host binary installation)  
+**Current Iteration**: 004 (Phase 2: Complete Architecture, Contracts, Failure Classification & Pipeline Integration)  
+**Current Milestone**: Phase 2 — Multi-View 3D Reconstruction Integration (Architecture & Adapter: IMPLEMENTED & VERIFIED with 75 tests; Live Reconstruction: BLOCKED pending host binary installation)  
 
 ---
 
@@ -12,10 +12,10 @@
 
 | Dimension | Status | Notes |
 | :--- | :--- | :--- |
-| **Codebase State** | Phase 1 Verified, Phase 2 Implemented | Real video ingest, streaming extraction, quality filtering, Meshroom adapter implemented, CLI `--reconstruct` working (65 tests passing). |
+| **Codebase State** | Phase 1 Verified, Phase 2 Hardened | Ingest, streaming extraction, quality filtering, Meshroom adapter, 7-state failure classification, reconstruction reports, CLI `--reconstruct` working (75 tests passing). |
 | **Python Target** | 3.10.11 | Installed and active in `.venv` (`.venv\Scripts\python`). |
 | **Dependencies** | Phase 1 & 2 Active | `numpy==2.2.6`, `opencv-python==5.0.0.93`, `pyyaml==6.0.3`, `tqdm==4.70.1`, `pytest==9.1.1`. Zero heavyweight AI dependencies. |
-| **Verified Components** | Ingest, Frames, Quality, Pipeline, Reconstruction Adapter | Frame extraction, blur/exposure/redundancy filter, reports, Meshroom adapter (mocked subprocess), CLI. |
+| **Verified Components** | Ingest, Frames, Quality, Pipeline, Reconstruction Engine & Contracts | Frame extraction, blur/exposure/redundancy filter, reports, Meshroom adapter, failure states, partial reconstruction, CLI graceful degradation. |
 | **Active Blockers** | Meshroom Host Binary | Neither `meshroom_batch` nor `colmap` is installed on host system. Live reconstruction blocked until installed or path configured (`ISSUE-BLK-002`). |
 
 ---

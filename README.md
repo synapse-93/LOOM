@@ -18,9 +18,9 @@ The project strictly distinguishes between **Implemented**, **Scaffolded**, and 
 | **Video Ingest & Frames** | `src/loom/video/` | **Implemented** | Video container validation, stream metadata extraction, streaming frame extraction & manifest. |
 | **Capture Quality & Coverage** | `src/loom/capture/` | **Implemented** | Laplacian sharpness, exposure/contrast gating, thumbnail redundancy filter, and capture guidance. |
 | **Geometry Utilities** | `src/loom/geometry/` | **Implemented** | 3D coordinate primitives, vector math, bounding box calculation, 4x4 transform matrices. |
-| **Test Suite** | `tests/` | **Implemented** | 65 automated unit/integration tests verifying ingest, frames, quality, Meshroom adapter, contracts, and pipeline. |
+| **Test Suite** | `tests/` | **Implemented** | 75 automated unit/integration tests verifying ingest, frames, quality, Meshroom adapter, contracts, and pipeline. |
 | **Diagnostics & Tools** | `scripts/` | **Implemented** | `environment_check.py`, `generate_test_video.py`, and `reconstruction_smoke_test.py`. |
-| **3D Reconstruction Engine** | `src/loom/reconstruction/` | **Implemented** | `MeshroomAdapter` subprocess execution, timeout handling, `cameras.sfm` registration metrics, artifact discovery (`--reconstruct`). |
+| **3D Reconstruction Engine** | `src/loom/reconstruction/` | **Implemented** | `MeshroomAdapter` subprocess execution, timeout handling, 7-state failure classification, `cameras.sfm` registration metrics, artifact discovery (`--reconstruct`). Live execution blocked pending host binary installation. |
 | **Point Cloud Processing** | `src/loom/pointcloud/` | *Scaffolded* | Outlier removal, voxel downsampling interfaces defined; implementation planned for Phase 3. |
 | **Mesh Processing & Repair** | `src/loom/mesh/` | *Scaffolded* | Cleaning, hole-filling, normal unification, Poisson meshing interfaces defined; planned for Phase 3. |
 | **Metric Scaling Subsystem** | `src/loom/scaling/` | *Scaffolded* | ArUco detection, calibration, and transform interfaces defined; planned for Phase 4. |

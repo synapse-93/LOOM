@@ -54,7 +54,9 @@ class CaptureAnalysisArtifact(BaseArtifact):
 class ReconstructionArtifact(BaseArtifact):
     """Artifact representing raw photogrammetry output (mesh and camera trajectory)."""
 
-    mesh_path: Path = field(default_factory=lambda: Path())
+    mesh_path: Optional[Path] = None
+    sparse_reconstruction_path: Optional[Path] = None
+    dense_point_cloud_path: Optional[Path] = None
     point_cloud_path: Optional[Path] = None
     camera_poses_path: Optional[Path] = None
     backend_name: str = "unknown"

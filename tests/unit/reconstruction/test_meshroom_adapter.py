@@ -13,9 +13,17 @@ from loom.reconstruction.exceptions import (
     ReconstructionArtifactNotFoundError,
     ReconstructionBinaryNotFoundError,
     ReconstructionExecutionError,
+    ReconstructionInvalidInputError,
+    ReconstructionPartialError,
+    ReconstructionTimeoutError,
 )
-from loom.reconstruction.meshroom import MeshroomAdapter
-from loom.reconstruction.models import ReconstructionJobConfig
+from loom.reconstruction.meshroom import DiscoveredArtifacts, MeshroomAdapter
+from loom.reconstruction.models import (
+    ReconstructionJobConfig,
+    ReconstructionResult,
+    ReconstructionStage,
+    ReconstructionStatus,
+)
 from loom.reconstruction.runner import ReconstructionRunner
 
 
@@ -282,3 +290,154 @@ def test_reconstruction_runner_unsupported_backend() -> None:
     """Verify ReconstructionRunner raises descriptive ValueError for unsupported backend."""
     with pytest.raises(ValueError, match="Unknown reconstruction backend 'gaussian_splatting'"):
         ReconstructionRunner.get_engine("gaussian_splatting")
+
+
+def test_partial_reconstruction_mocked(
+    tmp_path: Path, dummy_frames: list[Path], dummy_binary: Path
+) -> None:
+    """Verify that when point cloud and SFM are generated but mesh is missing, status is PARTIAL."""
+    adapter = MeshroomAdapter(binary_path=dummy_binary)
+    ws_dir = tmp_path / "recon_partial"
+    job_cfg = ReconstructionJobConfig(workspace_dir=ws_dir, binary_path=dummy_binary)
+
+    def fake_partial_popen(*args, **kwargs):
+        out_dir = ws_dir / "output"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        # Point cloud and SFM exist, but texturedMesh.obj does NOT
+        (out_dir / "cloud_and_poses.ply").write_text("ply format ascii\n")
+        sfm_content = {
+            "views": [{"viewId": "1"}, {"viewId": "2"}, {"viewId": "3"}],
+            "poses": [{"poseId": "1"}, {"poseId": "2"}],
+        }
+        (out_dir / "cameras.sfm").write_text(json.dumps(sfm_content))
+
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ("[AliceVision] SfM succeeded, Meshing aborted\n", "")
+        mock_proc.returncode = 0
+        return mock_proc
+
+    with patch("subprocess.Popen", side_effect=fake_partial_popen):
+        result = adapter.reconstruct(dummy_frames, job_cfg)
+
+    assert result.success is False
+    assert result.status == ReconstructionStatus.PARTIAL
+    assert result.mesh_path is None
+    assert result.point_cloud_path is not None
+    assert result.sparse_reconstruction_path is not None
+    assert result.camera_poses_path is not None
+    assert result.registered_cameras_count == 2
+    assert result.registration_ratio == pytest.approx(2 / 3, abs=0.01)
+    assert result.log_path is not None
+    assert result.log_path.is_file()
+    assert "SfM succeeded" in result.log_path.read_text()
+
+
+def test_artifact_missing_reconstruction_mocked(
+    tmp_path: Path, dummy_frames: list[Path], dummy_binary: Path
+) -> None:
+    """Verify that when process succeeds but zero artifacts are produced, status is ARTIFACT_MISSING."""
+    adapter = MeshroomAdapter(binary_path=dummy_binary)
+    ws_dir = tmp_path / "recon_empty"
+    job_cfg = ReconstructionJobConfig(workspace_dir=ws_dir, binary_path=dummy_binary)
+
+    def fake_empty_popen(*args, **kwargs):
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = ("No outputs produced\n", "")
+        mock_proc.returncode = 0
+        return mock_proc
+
+    with patch("subprocess.Popen", side_effect=fake_empty_popen):
+        result = adapter.reconstruct(dummy_frames, job_cfg)
+
+    assert result.success is False
+    assert result.status == ReconstructionStatus.ARTIFACT_MISSING
+    assert result.mesh_path is None
+    assert result.point_cloud_path is None
+    assert result.sparse_reconstruction_path is None
+    assert result.dense_point_cloud_path is None
+
+
+def test_subprocess_timeout_raises_timeout_error_type(
+    tmp_path: Path, dummy_frames: list[Path], dummy_binary: Path
+) -> None:
+    """Verify that subprocess timeout raises ReconstructionTimeoutError (subclass of ReconstructionExecutionError)."""
+    adapter = MeshroomAdapter(binary_path=dummy_binary)
+    ws_dir = tmp_path / "recon_timeout_subclass"
+    job_cfg = ReconstructionJobConfig(workspace_dir=ws_dir, binary_path=dummy_binary, timeout_seconds=1)
+
+    def fake_timeout(*args, **kwargs):
+        mock_proc = MagicMock()
+        mock_proc.communicate.side_effect = subprocess.TimeoutExpired(cmd=["meshroom_batch"], timeout=1)
+        mock_proc.kill.return_value = None
+        return mock_proc
+
+    with patch("subprocess.Popen", side_effect=fake_timeout):
+        with pytest.raises(ReconstructionTimeoutError) as exc_info:
+            adapter.reconstruct(dummy_frames, job_cfg)
+        assert isinstance(exc_info.value, ReconstructionExecutionError)
+        assert "timed out after 1 seconds" in str(exc_info.value)
+
+
+def test_invalid_input_error_types(tmp_path: Path, dummy_binary: Path) -> None:
+    """Verify that ReconstructionInvalidInputError is raised for invalid frame lists."""
+    adapter = MeshroomAdapter(binary_path=dummy_binary)
+    job_cfg = ReconstructionJobConfig(workspace_dir=tmp_path / "ws", binary_path=dummy_binary)
+
+    with pytest.raises(ReconstructionInvalidInputError) as exc_info:
+        adapter.reconstruct([], job_cfg)
+    assert isinstance(exc_info.value, ValueError)
+    assert "empty list of frames" in str(exc_info.value)
+
+    fake_file = tmp_path / "missing_frame.jpg"
+    with pytest.raises(ReconstructionInvalidInputError) as exc_info2:
+        adapter.reconstruct([fake_file], job_cfg)
+    assert isinstance(exc_info2.value, FileNotFoundError)
+
+
+def test_discovered_artifacts_model_properties(tmp_path: Path) -> None:
+    """Verify DiscoveredArtifacts sequence unpacking, dictionary indexing, and dense/sparse separation."""
+    out_dir = tmp_path / "artifacts_test"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    mesh_file = out_dir / "texturedMesh.obj"
+    mesh_file.write_text("v 0 0 0\n")
+    dense_pc = out_dir / "densePointCloud.ply"
+    dense_pc.write_text("ply\n")
+    sparse_pc = out_dir / "cloud_and_poses.ply"
+    sparse_pc.write_text("ply\n")
+    sfm_file = out_dir / "cameras.sfm"
+    sfm_file.write_text("{}")
+
+    discovered = MeshroomAdapter.discover_output_artifacts(out_dir)
+
+    # 1. Backward-compatible 3-tuple unpacking
+    mesh, pc, sfm = discovered
+    assert mesh == mesh_file.resolve()
+    assert pc == dense_pc.resolve()  # dense takes priority for primary point_cloud_path
+    assert sfm == sfm_file.resolve()
+
+    # 2. Explicit dense and sparse paths
+    assert discovered.dense_point_cloud_path == dense_pc.resolve()
+    assert discovered.sparse_reconstruction_path == sparse_pc.resolve()
+    assert discovered.mesh_path == mesh_file.resolve()
+    assert discovered.camera_poses_path == sfm_file.resolve()
+
+    # 3. Index and key access
+    assert discovered[0] == mesh_file.resolve()
+    assert discovered["mesh_path"] == mesh_file.resolve()
+    assert discovered["dense_point_cloud_path"] == dense_pc.resolve()
+
+
+def test_reconstruction_stage_sequence() -> None:
+    """Verify conceptual ReconstructionStage progression is properly ordered."""
+    stages = list(ReconstructionStage)
+    assert len(stages) == 8
+    assert stages[0] == ReconstructionStage.STAGE_0_INPUT_VALIDATION
+    assert stages[1] == ReconstructionStage.STAGE_1_CAMERA_INIT
+    assert stages[2] == ReconstructionStage.STAGE_2_CAMERA_REGISTRATION
+    assert stages[3] == ReconstructionStage.STAGE_3_SPARSE_RECONSTRUCTION
+    assert stages[4] == ReconstructionStage.STAGE_4_DENSE_RECONSTRUCTION
+    assert stages[5] == ReconstructionStage.STAGE_5_MESH_GENERATION
+    assert stages[6] == ReconstructionStage.STAGE_6_ARTIFACT_DISCOVERY
+    assert stages[7] == ReconstructionStage.STAGE_7_DIAGNOSTICS
+

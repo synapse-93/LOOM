@@ -124,3 +124,23 @@ This document records the architectural and engineering decisions accepted for V
   - Output discovery checks direct paths, then cached node outputs, prioritizing textured meshes over untextured intermediate meshes.
   - If Meshroom exits 0 but produces no valid 3D mesh artifact, the adapter marks `success=False` with a descriptive message rather than claiming success.
 
+---
+
+## ADR-007: Explicit Reconstruction Failure Classification and Decoupled Multi-Tier Artifact Model
+
+- **Status**: ACCEPTED
+- **Date**: 2026-09-26
+- **Decision**: Define a 7-state enumeration (`ReconstructionStatus`: `SUCCESS`, `PARTIAL`, `BINARY_UNAVAILABLE`, `INVALID_INPUT`, `PROCESS_FAILED`, `TIMEOUT`, `ARTIFACT_MISSING`) and decoupled artifact model separating sparse reconstruction (`sparse_reconstruction_path`), dense point cloud (`dense_point_cloud_path`), and raw surface mesh (`mesh_path`). Standardize `reports/reconstruction.json` to reflect this classification.
+- **Reason**:
+  - Photogrammetry pipelines frequently complete initial stages (feature extraction, camera registration, sparse/dense point cloud triangulation) while failing downstream surface meshing due to memory exhaustion, planar degeneracies, or noise.
+  - Collapsing partial reconstructions into a generic failure discards valuable diagnostic artifacts and prevents future recovery strategies.
+  - Collapsing missing host executables into generic runtime crashes breaks user trust and prevents automated fallback or helpful installation instructions.
+  - Distinguishing sparse SfM clouds from dense MVS clouds prevents downstream stages from misinterpreting a sparse point cloud as a dense printable surface.
+- **Alternatives Considered**:
+  - *Binary boolean success flag only*: Masks root causes; inability to distinguish missing binary from algorithm convergence failure or partial completion.
+  - *Unified point cloud path without sparse/dense distinction*: Causes ambiguity in point density and downstream filtering parameters.
+- **Consequences**:
+  - Downstream pipeline stages and CLI summary outputs explicitly inspect `status` and can access partial artifacts when available.
+  - When the photogrammetry backend is not installed on the host system, the pipeline completes Phase 1 successfully, gracefully logs `BINARY_UNAVAILABLE`, and outputs a valid `reconstruction.json` without crashing.
+
+

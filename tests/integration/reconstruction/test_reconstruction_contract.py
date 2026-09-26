@@ -49,3 +49,56 @@ def test_colmap_adapter_contract() -> None:
     cfg = ReconstructionJobConfig(workspace_dir=Path("outputs/test"))
     with pytest.raises(NotImplementedError):
         adapter.reconstruct([], cfg)
+
+
+def test_reconstruction_result_contract() -> None:
+    """Verify ReconstructionResult contract enforces expected fields, aliases, and zero-hallucination None values."""
+    from loom.reconstruction.models import ReconstructionResult, ReconstructionStatus
+
+    # Default result has None for unmeasured values
+    res = ReconstructionResult(
+        success=False,
+        status=ReconstructionStatus.BINARY_UNAVAILABLE,
+        backend_name="meshroom",
+        input_frames_count=15,
+        error_message="Executable not found",
+    )
+
+    assert res.success is False
+    assert res.status == ReconstructionStatus.BINARY_UNAVAILABLE
+    assert res.backend == "meshroom"
+    assert res.backend_name == "meshroom"
+    assert res.input_frames_count == 15
+    assert res.input_frame_count == 15
+    assert res.registered_cameras_count is None
+    assert res.registered_camera_count is None
+    assert res.registration_ratio is None
+    assert res.point_count is None
+    assert res.mesh_path is None
+    assert res.raw_mesh_path is None
+    assert res.sparse_reconstruction_path is None
+    assert res.dense_point_cloud_path is None
+    assert res.point_cloud_path is None
+    assert res.camera_poses_path is None
+    assert res.workspace_path is None
+    assert res.log_path is None
+    assert res.execution_time_seconds == 0.0
+    assert res.error_message == "Executable not found"
+
+
+def test_reconstruction_status_enumeration() -> None:
+    """Verify all 7 distinct failure and completion classifications exist."""
+    from loom.reconstruction.models import ReconstructionStatus
+
+    expected = {
+        "success",
+        "partial",
+        "binary_unavailable",
+        "invalid_input",
+        "process_failed",
+        "timeout",
+        "artifact_missing",
+    }
+    actual = {s.value for s in ReconstructionStatus}
+    assert actual == expected
+

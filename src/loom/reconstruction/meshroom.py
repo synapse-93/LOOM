@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -16,11 +17,50 @@ from loom.reconstruction.exceptions import (
     ReconstructionArtifactNotFoundError,
     ReconstructionBinaryNotFoundError,
     ReconstructionExecutionError,
+    ReconstructionInvalidInputError,
+    ReconstructionPartialError,
+    ReconstructionTimeoutError,
 )
-from loom.reconstruction.models import ReconstructionJobConfig, ReconstructionResult
+from loom.reconstruction.models import (
+    ReconstructionJobConfig,
+    ReconstructionResult,
+    ReconstructionStage,
+    ReconstructionStatus,
+)
 from loom.utils.paths import ensure_directory
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class DiscoveredArtifacts:
+    """Discovered 3D reconstruction artifacts from a photogrammetry workspace."""
+
+    mesh_path: Optional[Path] = None
+    point_cloud_path: Optional[Path] = None
+    dense_point_cloud_path: Optional[Path] = None
+    sparse_reconstruction_path: Optional[Path] = None
+    camera_poses_path: Optional[Path] = None
+
+    def __iter__(self):
+        """Enable backward-compatible 3-variable tuple unpacking: (mesh, pc, poses)."""
+        yield self.mesh_path
+        yield self.point_cloud_path
+        yield self.camera_poses_path
+
+    def __getitem__(self, item: int | str):
+        """Enable dictionary and index subscript access for backward compatibility."""
+        lookup = {
+            0: self.mesh_path,
+            1: self.point_cloud_path,
+            2: self.camera_poses_path,
+            "mesh_path": self.mesh_path,
+            "point_cloud_path": self.point_cloud_path,
+            "dense_point_cloud_path": self.dense_point_cloud_path,
+            "sparse_reconstruction_path": self.sparse_reconstruction_path,
+            "camera_poses_path": self.camera_poses_path,
+        }
+        return lookup[item]
 
 
 class MeshroomAdapter(ReconstructionEngine):
@@ -171,8 +211,8 @@ class MeshroomAdapter(ReconstructionEngine):
     def discover_output_artifacts(
         output_dir: Path,
         cache_dir: Path | None = None,
-    ) -> tuple[Optional[Path], Optional[Path], Optional[Path]]:
-        """Search output and cache directories for generated mesh, point cloud, and camera poses.
+    ) -> DiscoveredArtifacts:
+        """Search output and cache directories for generated mesh, point clouds, and camera poses.
 
         Discovery order for 3D Mesh:
             1. Textured mesh in output directory (`texturedMesh.obj` / `.ply`)
@@ -181,9 +221,12 @@ class MeshroomAdapter(ReconstructionEngine):
             4. MeshFiltering / Meshing node output (`MeshFiltering/**/mesh.obj`, `Meshing/**/mesh.obj`)
 
         Returns:
-            Tuple of (mesh_path, point_cloud_path, camera_poses_path).
+            DiscoveredArtifacts containing mesh, dense point cloud, sparse reconstruction,
+            and camera poses paths. Supports 3-tuple unpacking `(mesh, pc, poses)` for backward compatibility.
         """
         mesh_path: Optional[Path] = None
+        dense_point_cloud_path: Optional[Path] = None
+        sparse_reconstruction_path: Optional[Path] = None
         point_cloud_path: Optional[Path] = None
         camera_poses_path: Optional[Path] = None
 
@@ -207,14 +250,12 @@ class MeshroomAdapter(ReconstructionEngine):
             if mesh_path:
                 break
 
-        # If not found directly, perform recursive search within search directories
         if mesh_path is None:
             candidate_meshes: list[Path] = []
             for sdir in search_dirs:
                 if sdir.is_dir():
                     for ext in ("*.obj", "*.ply"):
                         for f in sdir.rglob(ext):
-                            # Ignore camera/pointcloud files
                             if (
                                 f.is_file()
                                 and f.stat().st_size > 0
@@ -224,7 +265,6 @@ class MeshroomAdapter(ReconstructionEngine):
                                 candidate_meshes.append(f)
 
             if candidate_meshes:
-                # Prefer textured meshes first, then filtered meshes, then deepest/latest
                 textured = [m for m in candidate_meshes if "textured" in m.name.lower()]
                 if textured:
                     mesh_path = textured[0].resolve()
@@ -235,37 +275,69 @@ class MeshroomAdapter(ReconstructionEngine):
                     else:
                         mesh_path = candidate_meshes[0].resolve()
 
-        # 2. Search for dense/sparse point cloud
-        pc_names = [
-            "cloud_and_poses.ply",
+        # 2. Search for dense point cloud (MVS output)
+        dense_names = [
             "densePointCloud.ply",
+            "densePointCloud.obj",
             "pointCloud.ply",
             "pointcloud.ply",
         ]
         for sdir in search_dirs:
-            for name in pc_names:
+            for name in dense_names:
                 candidate = sdir / name
                 if candidate.is_file() and candidate.stat().st_size > 0:
-                    point_cloud_path = candidate.resolve()
+                    dense_point_cloud_path = candidate.resolve()
                     break
-            if point_cloud_path:
+            if dense_point_cloud_path:
                 break
 
-        if point_cloud_path is None:
+        if dense_point_cloud_path is None:
             for sdir in search_dirs:
                 if sdir.is_dir():
                     for f in sdir.rglob("*.ply"):
                         if (
                             f.is_file()
                             and f.stat().st_size > 0
-                            and ("cloud" in f.name.lower() or "sfm" in str(f).lower())
+                            and "dense" in f.name.lower()
                         ):
-                            point_cloud_path = f.resolve()
+                            dense_point_cloud_path = f.resolve()
                             break
-                if point_cloud_path:
+                if dense_point_cloud_path:
                     break
 
-        # 3. Search for camera trajectory / poses
+        # 3. Search for sparse point cloud (SfM output)
+        sparse_names = [
+            "cloud_and_poses.ply",
+            "sfm.ply",
+            "sparsePointCloud.ply",
+        ]
+        for sdir in search_dirs:
+            for name in sparse_names:
+                candidate = sdir / name
+                if candidate.is_file() and candidate.stat().st_size > 0:
+                    sparse_reconstruction_path = candidate.resolve()
+                    break
+            if sparse_reconstruction_path:
+                break
+
+        if sparse_reconstruction_path is None:
+            for sdir in search_dirs:
+                if sdir.is_dir():
+                    for f in sdir.rglob("*.ply"):
+                        if (
+                            f.is_file()
+                            and f.stat().st_size > 0
+                            and ("sparse" in f.name.lower() or "sfm" in str(f).lower() or "cloud" in f.name.lower())
+                            and f != dense_point_cloud_path
+                        ):
+                            sparse_reconstruction_path = f.resolve()
+                            break
+                if sparse_reconstruction_path:
+                    break
+
+        point_cloud_path = dense_point_cloud_path or sparse_reconstruction_path
+
+        # 4. Search for camera trajectory / poses
         pose_names = ["cameras.sfm", "sfm.abc", "sfm.json"]
         for sdir in search_dirs:
             for name in pose_names:
@@ -286,7 +358,13 @@ class MeshroomAdapter(ReconstructionEngine):
                 if camera_poses_path:
                     break
 
-        return mesh_path, point_cloud_path, camera_poses_path
+        return DiscoveredArtifacts(
+            mesh_path=mesh_path,
+            point_cloud_path=point_cloud_path,
+            dense_point_cloud_path=dense_point_cloud_path,
+            sparse_reconstruction_path=sparse_reconstruction_path,
+            camera_poses_path=camera_poses_path,
+        )
 
     def reconstruct(
         self,
@@ -304,24 +382,27 @@ class MeshroomAdapter(ReconstructionEngine):
 
         Raises:
             ReconstructionBinaryNotFoundError: If meshroom_batch executable is missing.
-            ValueError: If input frame list is empty or frames are unreadable.
+            ReconstructionInvalidInputError: If input frame list is empty or invalid.
+            FileNotFoundError: If any input frame does not exist.
             ReconstructionExecutionError: If subprocess fails with non-zero exit code.
-            TimeoutError: If execution exceeds configured timeout.
+            ReconstructionTimeoutError: If execution exceeds configured timeout.
         """
-        # 1. Check input frames
+        # Stage 0: Input validation
         if not frame_paths:
-            raise ValueError("Cannot reconstruct 3D scene from an empty list of frames.")
+            raise ReconstructionInvalidInputError("Cannot reconstruct 3D scene from an empty list of frames.")
 
         valid_frames: list[Path] = []
         for p in frame_paths:
             resolved = Path(p).resolve()
             if not resolved.is_file():
-                raise FileNotFoundError(f"Input frame does not exist: {p}")
+                raise ReconstructionInvalidInputError(f"Input frame does not exist: {p}")
             if resolved.suffix.lower() not in self.SUPPORTED_EXTENSIONS:
-                raise ValueError(f"Unsupported image format for reconstruction: {resolved.suffix}")
+                raise ReconstructionInvalidInputError(
+                    f"Unsupported image format for reconstruction: {resolved.suffix}"
+                )
             valid_frames.append(resolved)
 
-        # 2. Check binary availability
+        # Stage 1 Prerequisites: Binary availability check
         bin_path = self.resolve_binary(config.binary_path)
         if bin_path is None:
             target_desc = str(config.binary_path) if config.binary_path else (str(self._binary_path) if self._binary_path else "meshroom_batch")
@@ -331,7 +412,7 @@ class MeshroomAdapter(ReconstructionEngine):
                 "or specify 'binary_path' in ReconstructionConfig."
             )
 
-        # 3. Setup workspace directory layout
+        # Workspace directory layout
         workspace_dir = ensure_directory(config.workspace_dir)
         input_dir = ensure_directory(workspace_dir / "input")
         output_dir = ensure_directory(workspace_dir / "output")
@@ -339,17 +420,16 @@ class MeshroomAdapter(ReconstructionEngine):
         logs_dir = ensure_directory(workspace_dir / "logs")
         log_file = logs_dir / "reconstruction.log"
 
-        # Copy or symlink valid frames into workspace/input
+        # Copy valid frames into workspace/input
         for src_frame in valid_frames:
             dest_frame = input_dir / src_frame.name
             if not dest_frame.exists():
                 try:
                     shutil.copy2(src_frame, dest_frame)
                 except Exception:
-                    # Fallback to copy if symlink unsupported
                     shutil.copy2(src_frame, dest_frame)
 
-        # 4. Construct command
+        # Command construction
         cmd = self.build_command(
             binary_path=bin_path,
             input_dir=input_dir,
@@ -369,7 +449,7 @@ class MeshroomAdapter(ReconstructionEngine):
         start_time = time.time()
         log_lines: list[str] = []
 
-        # 5. Execute subprocess with streaming log capture
+        # Subprocess execution with safe timeout handling and streaming log capture
         try:
             with open(log_file, "w", encoding="utf-8") as lf:
                 lf.write(f"=== Meshroom Reconstruction Invocation ===\n")
@@ -413,7 +493,7 @@ class MeshroomAdapter(ReconstructionEngine):
                         f"Meshroom reconstruction timed out after {config.timeout_seconds} seconds."
                     )
                     logger.error(err_msg)
-                    raise ReconstructionExecutionError(err_msg)
+                    raise ReconstructionTimeoutError(err_msg)
 
             elapsed_time = round(time.time() - start_time, 2)
 
@@ -426,7 +506,7 @@ class MeshroomAdapter(ReconstructionEngine):
                 logger.error(err_msg)
                 raise ReconstructionExecutionError(err_msg)
 
-        except ReconstructionExecutionError:
+        except (ReconstructionExecutionError, ReconstructionBinaryNotFoundError, ReconstructionInvalidInputError):
             raise
         except Exception as e:
             elapsed_time = round(time.time() - start_time, 2)
@@ -437,20 +517,28 @@ class MeshroomAdapter(ReconstructionEngine):
                 point_cloud_path=None,
                 camera_poses_path=None,
                 success=False,
+                status=ReconstructionStatus.PROCESS_FAILED,
                 backend_name=self.backend_name,
                 execution_time_seconds=elapsed_time,
+                workspace_dir=workspace_dir,
+                output_dir=output_dir,
+                log_path=log_file,
                 log_output="".join(log_lines[-100:]),
                 error_message=err_msg,
                 input_frames_count=len(valid_frames),
             )
 
-        # 6. Discover and validate output artifacts
-        mesh_path, point_cloud_path, camera_poses_path = self.discover_output_artifacts(
+        # Stage 6: Artifact discovery
+        artifacts = self.discover_output_artifacts(
             output_dir=output_dir,
             cache_dir=cache_dir,
         )
 
-        # Extract camera registration stats if poses are available
+        mesh_path = artifacts.mesh_path
+        point_cloud_path = artifacts.point_cloud_path
+        camera_poses_path = artifacts.camera_poses_path
+
+        # Stage 7: Diagnostics and result generation
         registered_count: Optional[int] = None
         reg_ratio: Optional[float] = None
         if camera_poses_path and camera_poses_path.suffix.lower() == ".sfm":
@@ -459,7 +547,17 @@ class MeshroomAdapter(ReconstructionEngine):
         success = mesh_path is not None and mesh_path.is_file() and mesh_path.stat().st_size > 0
 
         error_message: Optional[str] = None
-        if not success:
+        if success:
+            status = ReconstructionStatus.SUCCESS
+        elif point_cloud_path is not None or camera_poses_path is not None:
+            status = ReconstructionStatus.PARTIAL
+            error_message = (
+                "Meshroom execution completed partially (camera poses / point cloud generated, "
+                f"but raw 3D mesh was not produced in {output_dir})."
+            )
+            logger.warning(error_message)
+        else:
+            status = ReconstructionStatus.ARTIFACT_MISSING
             error_message = (
                 "Meshroom execution completed, but no non-empty 3D mesh artifact "
                 f"was found in {output_dir}."
@@ -467,8 +565,9 @@ class MeshroomAdapter(ReconstructionEngine):
             logger.error(error_message)
 
         logger.info(
-            "Meshroom reconstruction finished in %.2fs (success=%s, mesh=%s, cameras=%s/%s)",
+            "Meshroom reconstruction finished in %.2fs (status=%s, success=%s, mesh=%s, cameras=%s/%s)",
             elapsed_time,
+            status.value,
             success,
             mesh_path.name if mesh_path else "None",
             registered_count,
@@ -477,14 +576,21 @@ class MeshroomAdapter(ReconstructionEngine):
 
         return ReconstructionResult(
             mesh_path=mesh_path,
+            sparse_reconstruction_path=artifacts.sparse_reconstruction_path,
+            dense_point_cloud_path=artifacts.dense_point_cloud_path,
             point_cloud_path=point_cloud_path,
             camera_poses_path=camera_poses_path,
             success=success,
+            status=status,
             backend_name=self.backend_name,
             execution_time_seconds=elapsed_time,
+            workspace_dir=workspace_dir,
+            output_dir=output_dir,
+            log_path=log_file,
             log_output="".join(log_lines[-100:]),
             error_message=error_message,
             input_frames_count=len(valid_frames),
             registered_cameras_count=registered_count,
             registration_ratio=reg_ratio,
         )
+

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 import pytest
 from loom.config.models import LoomConfig, VideoConfig, CaptureConfig
 from loom.pipeline.runner import run_phase1_pipeline
+from loom.reconstruction.models import ReconstructionResult, ReconstructionStatus
 
 
 def test_phase1_pipeline_end_to_end(synthetic_video_path: Path, tmp_path: Path) -> None:
@@ -111,3 +113,108 @@ def test_phase1_pipeline_multiple_runs_do_not_collide(synthetic_video_path: Path
     assert result1.run_dir != result2.run_dir
     assert result1.run_dir.is_dir()
     assert result2.run_dir.is_dir()
+
+
+def test_phase1_pipeline_with_reconstruction_unavailable(
+    synthetic_video_path: Path, tmp_path: Path
+) -> None:
+    """Verify that when reconstruct=True is passed but Meshroom is absent, pipeline gracefully reports BINARY_UNAVAILABLE."""
+    output_root = tmp_path / "loom_outputs"
+    config = LoomConfig(
+        output_dir=output_root,
+        video=VideoConfig(sample_interval=5, max_frames=5),
+    )
+
+    result = run_phase1_pipeline(synthetic_video_path, config, reconstruct=True)
+
+    # Phase 1 completes successfully
+    assert result.run_dir.is_dir()
+    assert result.metadata_report_path.is_file()
+    assert result.capture_report_path.is_file()
+    assert len(result.capture_analysis_artifact.selected_frames) > 0
+
+    # Phase 2 result is present and categorized as BINARY_UNAVAILABLE (since Meshroom is not on host)
+    assert result.reconstruction_result is not None
+    assert result.reconstruction_result.success is False
+    assert result.reconstruction_result.status == ReconstructionStatus.BINARY_UNAVAILABLE
+    assert result.reconstruction_result.mesh_path is None
+    assert "executable not found" in result.reconstruction_result.error_message.lower()
+
+    # reports/reconstruction.json is generated with standardized schema
+    assert result.reconstruction_report_path is not None
+    assert result.reconstruction_report_path.is_file()
+
+    with open(result.reconstruction_report_path, "r", encoding="utf-8") as rf:
+        recon_data = json.load(rf)
+
+    assert recon_data["backend"] == "meshroom"
+    assert recon_data["status"] == "binary_unavailable"
+    assert recon_data["success"] is False
+    assert recon_data["mesh_generated"] is False
+    assert recon_data["mesh_path"] is None
+    assert recon_data["point_cloud_path"] is None
+    assert recon_data["sparse_reconstruction"] is None
+    assert "workspace_path" in recon_data
+    assert "input_frames" in recon_data
+    assert recon_data["input_frames"] == len(result.capture_analysis_artifact.selected_frames)
+
+
+def test_phase1_pipeline_with_reconstruction_mocked_success(
+    synthetic_video_path: Path, tmp_path: Path
+) -> None:
+    """Verify end-to-end Phase 1 + Phase 2 execution with a mocked successful reconstruction engine."""
+    output_root = tmp_path / "loom_outputs"
+    config = LoomConfig(
+        output_dir=output_root,
+        video=VideoConfig(sample_interval=5, max_frames=5),
+    )
+
+    mock_mesh_file = tmp_path / "mock_mesh.obj"
+    mock_mesh_file.write_text("v 0 0 0\nv 1 1 1\nf 1 2 3\n")
+    mock_pc_file = tmp_path / "mock_dense.ply"
+    mock_pc_file.write_text("ply format ascii\n")
+    mock_sparse_file = tmp_path / "mock_sparse.ply"
+    mock_sparse_file.write_text("ply format ascii\n")
+    mock_poses_file = tmp_path / "cameras.sfm"
+    mock_poses_file.write_text(json.dumps({"views": [1, 2], "poses": [1, 2]}))
+
+    mock_engine = MagicMock()
+    mock_engine.is_available.return_value = True
+    mock_engine.reconstruct.return_value = ReconstructionResult(
+        success=True,
+        status=ReconstructionStatus.SUCCESS,
+        backend_name="meshroom",
+        mesh_path=mock_mesh_file,
+        point_cloud_path=mock_pc_file,
+        dense_point_cloud_path=mock_pc_file,
+        sparse_reconstruction_path=mock_sparse_file,
+        camera_poses_path=mock_poses_file,
+        registered_cameras_count=2,
+        input_frames_count=2,
+        registration_ratio=1.0,
+        point_count=1500,
+        execution_time_seconds=12.5,
+    )
+
+    with patch("loom.pipeline.runner.ReconstructionRunner.get_engine", return_value=mock_engine):
+        result = run_phase1_pipeline(synthetic_video_path, config, reconstruct=True)
+
+    assert result.reconstruction_result is not None
+    assert result.reconstruction_result.success is True
+    assert result.reconstruction_result.status == ReconstructionStatus.SUCCESS
+    assert result.reconstruction_result.mesh_path == mock_mesh_file
+
+    with open(result.reconstruction_report_path, "r", encoding="utf-8") as rf:
+        recon_data = json.load(rf)
+
+    assert recon_data["status"] == "success"
+    assert recon_data["success"] is True
+    assert recon_data["mesh_generated"] is True
+    assert recon_data["mesh_path"] == str(mock_mesh_file)
+    assert recon_data["point_cloud_path"] == str(mock_pc_file)
+    assert recon_data["dense_point_cloud_path"] == str(mock_pc_file)
+    assert recon_data["sparse_reconstruction"] == str(mock_sparse_file)
+    assert recon_data["registered_cameras"] == 2
+    assert recon_data["registration_ratio"] == 1.0
+    assert recon_data["point_count"] == 1500
+

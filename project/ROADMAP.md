@@ -55,23 +55,28 @@ Phase 10 <── Phase 9 <── Phase 8 <── Phase 7 <── Phase 6 <──
 ---
 
 ### Phase 2: Reconstruction Backend Integration
-- **Status**: IN PROGRESS
-- **Objective**: Integrate external photogrammetry engine via an abstract adapter interface.
+- **Status**: ARCHITECTURE & ADAPTER IMPLEMENTED / VERIFIED (Live Reconstruction BLOCKED)
+- **Objective**: Integrate external photogrammetry engine via an abstract adapter interface, supporting deterministic workspace isolation, robust failure classifications, and typed output artifacts.
 - **Prerequisites**: Phase 1 complete; Meshroom / AliceVision binaries configured or mocked for CI.
 - **Delivered**:
-  - `src/loom/reconstruction/meshroom.py`: Production `MeshroomAdapter` implementing argument construction, workspace isolation (`workspace/{input,output,cache,logs}`), safe timeout handling via `proc.communicate`, streaming stdout/stderr logging to `reconstruction.log`, AliceVision `cameras.sfm` JSON parsing (`registered_cameras_count`, `registration_ratio`), and multi-tier output artifact discovery (`texturedMesh.obj/ply`, `cloud_and_poses.ply`).
+  - `src/loom/reconstruction/meshroom.py`: Production `MeshroomAdapter` implementing argument construction, workspace isolation (`workspace/{input,output,cache,logs}`), safe timeout handling via `proc.communicate`, real-time stdout/stderr logging to `reconstruction.log`, AliceVision `cameras.sfm` JSON parsing (`registered_cameras_count`, `registration_ratio`), multi-tier output artifact discovery separating dense (`densePointCloud.ply`) and sparse (`cloud_and_poses.ply`) clouds, and backwards-compatible tuple/dict unpacking.
+  - `src/loom/reconstruction/models.py`: `ReconstructionStatus` (7 explicit states: `SUCCESS`, `PARTIAL`, `BINARY_UNAVAILABLE`, `INVALID_INPUT`, `PROCESS_FAILED`, `TIMEOUT`, `ARTIFACT_MISSING`), `ReconstructionStage` (8 conceptual pipeline stages), and comprehensive `ReconstructionResult`.
+  - `src/loom/reconstruction/exceptions.py`: Typed hierarchy (`ReconstructionInvalidInputError`, `ReconstructionBinaryNotFoundError`, `ReconstructionExecutionError`, `ReconstructionTimeoutError`, `ReconstructionArtifactNotFoundError`, `ReconstructionPartialError`).
   - `src/loom/reconstruction/runner.py`: `ReconstructionRunner` engine factory and job runner.
-  - `src/loom/pipeline/runner.py`: End-to-end integration accepting `--reconstruct`, invoking the adapter directly on Phase 1 selected frames, and generating `reports/reconstruction.json`.
-  - `src/loom/__main__.py`: CLI extended with `--reconstruct` and `--meshroom-path` flags and Phase 2 terminal summary.
+  - `src/loom/pipeline/runner.py`: End-to-end integration accepting `--reconstruct`, invoking the adapter on Phase 1 selected frames, writing `reports/reconstruction.json`, and providing graceful degradation if the backend executable is absent.
+  - `src/loom/__main__.py`: CLI extended with `--reconstruct` and `--meshroom-path` flags, rich Phase 2 summary output with detailed failure state reporting.
+  - `docs/reconstruction.md`: Comprehensive Phase 2 architectural specification, contracts, stage definitions, and failure taxonomies.
   - `docs/capture/capture_guide.md`: Standard physical capture protocol for real smartphone videos.
   - `scripts/reconstruction_smoke_test.py`: Standalone environment diagnostic and live smoke test runner.
-  - `tests/unit/reconstruction/test_meshroom_adapter.py`: 13 comprehensive unit tests validating missing binary, invalid inputs, command construction, SFM parsing, artifact discovery, mocked successful subprocess, non-zero exit codes, timeouts, and missing mesh handling.
+  - 19 unit tests in `tests/unit/reconstruction/test_meshroom_adapter.py` and integration tests covering the complete Phase 2 contract (75 total passing tests).
 - **Measurable Completion Criteria**:
-  - [x] Adapter builds execution command, manages scratch directories, runs subprocess, and returns `ReconstructionResult`.
-  - [x] Gracefully catches timeouts or missing binaries with descriptive `ReconstructionError`.
-  - [x] Discovers and validates expected reconstruction artifacts (`texturedMesh.obj`, `cameras.sfm`, `cloud_and_poses.ply`).
-  - [x] Generates standardized machine-readable `reconstruction.json`.
-  - [ ] Live reconstruction of real physical object with Meshroom (BLOCKED: `meshroom_batch` not installed on host machine; see `ISSUE-BLK-002`).
+  - [x] Abstract adapter contract (`ReconstructionEngine`) decoupling LOOM from Meshroom internals.
+  - [x] Adapter builds execution command, manages isolated workspace directories, executes subprocess securely, and returns typed `ReconstructionResult`.
+  - [x] Gracefully handles missing binary (`BINARY_UNAVAILABLE`), invalid input frames (`INVALID_INPUT`), timeouts (`TIMEOUT`), non-zero process exits (`PROCESS_FAILED`), partial reconstructions (`PARTIAL`), and missing artifacts (`ARTIFACT_MISSING`).
+  - [x] Discovers and separates output artifacts (dense cloud, sparse cloud, camera poses, raw mesh).
+  - [x] Generates standardized machine-readable `reports/reconstruction.json`.
+  - [x] Integrated into Phase 1 pipeline with graceful degradation when photogrammetry backend is not installed on the host.
+  - [ ] Live reconstruction of real physical object with Meshroom (BLOCKED: `meshroom_batch` not installed on development host; see `ISSUE-BLK-002`).
 
 ---
 

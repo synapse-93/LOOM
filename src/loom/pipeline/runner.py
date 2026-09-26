@@ -20,7 +20,11 @@ from loom.pipeline.artifacts import (
     VideoArtifact,
 )
 from loom.pipeline.stages import PipelineStage
-from loom.reconstruction.models import ReconstructionJobConfig, ReconstructionResult
+from loom.reconstruction.models import (
+    ReconstructionJobConfig,
+    ReconstructionResult,
+    ReconstructionStatus,
+)
 from loom.reconstruction.runner import ReconstructionRunner
 from loom.utils.paths import ensure_directory
 from loom.video.frames import FrameExtractor
@@ -276,24 +280,29 @@ def run_phase1_pipeline(
                         camera_poses_path=None,
                         success=False,
                         backend_name=config.reconstruction.backend,
+                        status=ReconstructionStatus.BINARY_UNAVAILABLE,
                         error_message=(
                             f"Reconstruction backend '{config.reconstruction.backend}' executable not found. "
                             "Ensure Meshroom is installed or configure 'binary_path'."
                         ),
                         input_frames_count=len(selected_copied_paths),
+                        log_path=None,
                     )
                 else:
                     reconstruction_result = engine.reconstruct(selected_copied_paths, job_cfg)
             except Exception as e:
                 logger.error("Reconstruction execution failed: %s", e)
+                log_candidate = recon_workspace / "reconstruction.log"
                 reconstruction_result = ReconstructionResult(
                     mesh_path=None,
                     point_cloud_path=None,
                     camera_poses_path=None,
                     success=False,
                     backend_name=config.reconstruction.backend,
+                    status=ReconstructionStatus.PROCESS_FAILED,
                     error_message=str(e),
                     input_frames_count=len(selected_copied_paths),
+                    log_path=log_candidate if log_candidate.is_file() else None,
                 )
 
             # Write reconstruction.json report
@@ -302,20 +311,25 @@ def run_phase1_pipeline(
                 "run_id": run_id,
                 "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "backend": reconstruction_result.backend_name,
+                "status": reconstruction_result.status.value,
                 "success": reconstruction_result.success,
                 "input_frames": reconstruction_result.input_frames_count,
                 "registered_cameras": reconstruction_result.registered_cameras_count,
                 "registration_ratio": reconstruction_result.registration_ratio,
                 "point_count": reconstruction_result.point_count,
-                "mesh_generated": (
-                    reconstruction_result.mesh_path is not None
-                    and reconstruction_result.mesh_path.is_file()
-                    and reconstruction_result.mesh_path.stat().st_size > 0
+                "sparse_reconstruction": (
+                    str(reconstruction_result.sparse_reconstruction_path)
+                    if reconstruction_result.sparse_reconstruction_path
+                    else None
                 ),
-                "mesh_path": str(reconstruction_result.mesh_path) if reconstruction_result.mesh_path else None,
                 "point_cloud_path": (
                     str(reconstruction_result.point_cloud_path)
                     if reconstruction_result.point_cloud_path
+                    else None
+                ),
+                "dense_point_cloud_path": (
+                    str(reconstruction_result.dense_point_cloud_path)
+                    if reconstruction_result.dense_point_cloud_path
                     else None
                 ),
                 "camera_poses_path": (
@@ -323,8 +337,16 @@ def run_phase1_pipeline(
                     if reconstruction_result.camera_poses_path
                     else None
                 ),
+                "mesh_generated": (
+                    reconstruction_result.mesh_path is not None
+                    and reconstruction_result.mesh_path.is_file()
+                    and reconstruction_result.mesh_path.stat().st_size > 0
+                ),
+                "mesh_path": str(reconstruction_result.mesh_path) if reconstruction_result.mesh_path else None,
                 "execution_time_seconds": reconstruction_result.execution_time_seconds,
+                "workspace_path": str(recon_workspace),
                 "workspace_dir": str(recon_workspace),
+                "log_path": str(reconstruction_result.log_path) if reconstruction_result.log_path else None,
                 "error_message": reconstruction_result.error_message,
             }
             with open(reconstruction_report_path, "w", encoding="utf-8") as rf:
