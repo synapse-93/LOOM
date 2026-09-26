@@ -11,6 +11,7 @@ This document records the architectural and engineering decisions accepted for V
 - [ADR-003: Subprocess Isolation and Adapter Pattern for External Reconstruction Tools](#adr-003-subprocess-isolation-and-adapter-pattern-for-external-reconstruction-tools)
 - [ADR-004: Known-Size Reference Marker (ArUco) for Development Metric Scaling](#adr-004-known-size-reference-marker-aruco-for-development-metric-scaling)
 - [ADR-005: Deterministic Optical Quality Assessment and Thumbnail Redundancy Filtering](#adr-005-deterministic-optical-quality-assessment-and-thumbnail-redundancy-filtering)
+- [ADR-006: Meshroom Subprocess Execution, Timeout Safety, and Artifact Discovery Architecture](#adr-006-meshroom-subprocess-execution-timeout-safety-and-artifact-discovery-architecture)
 
 ---
 
@@ -103,3 +104,23 @@ This document records the architectural and engineering decisions accepted for V
   - *Deep learning quality models (e.g., BRISQUE, KonIQ, NIMA)*: Heavyweight dependencies (PyTorch/TensorFlow) violating Phase 1 dependency rules, non-deterministic across devices, and unnecessary for basic blur/exposure gating.
 - **Consequences**:
   - Default thresholds (`sharpness_threshold=100.0`, `min_brightness=30.0`, `max_brightness=235.0`, `min_contrast=15.0`, `redundancy_threshold=0.98`) provide robust initial filtering but remain fully user-configurable via `CaptureConfig` for challenging lighting environments.
+
+---
+
+## ADR-006: Meshroom Subprocess Execution, Timeout Safety, and Artifact Discovery Architecture
+
+- **Status**: ACCEPTED
+- **Date**: 2026-09-26
+- **Decision**: Execute Meshroom (`meshroom_batch`) via isolated subprocess with explicit argument lists (`shell=False`), safe timeout handling via `proc.communicate(timeout=...)`, streaming stdout/stderr into `reconstruction.log`, native JSON parsing of AliceVision's `cameras.sfm` for camera registration metrics, and controlled multi-tier output discovery for 3D meshes.
+- **Reason**:
+  - `shell=False` eliminates command injection vulnerabilities and path escaping issues across Windows and POSIX systems.
+  - Photogrammetry can hang or exceed reasonable compute budgets on degenerate captures; timeout enforcement with process termination and cleanup is mandatory.
+  - AliceVision produces structured `cameras.sfm` files containing `"views"` and `"poses"`; parsing this allows computing objective camera registration ratios ($R = \frac{|\text{poses}|}{|\text{views}|}$) without heuristics or fabrication.
+  - Meshroom's exact output path varies between versions and pipeline node graphs (`texturedMesh.obj`, `texturedMesh.ply`, `MeshFiltering/mesh.obj`); multi-tier discovery with explicit priority avoids brittle hardcoded paths while failing deterministically if no non-empty mesh is produced.
+- **Alternatives Considered**:
+  - *Hardcoded output path (`workspace/output/texturedMesh.obj`)*: Brittle; fails if Meshroom version exports PLY or writes to intermediate cache nodes.
+  - *Unbounded subprocess execution without timeout*: Unsafe; could lock system resources indefinitely on low-feature captures.
+- **Consequences**:
+  - Output discovery checks direct paths, then cached node outputs, prioritizing textured meshes over untextured intermediate meshes.
+  - If Meshroom exits 0 but produces no valid 3D mesh artifact, the adapter marks `success=False` with a descriptive message rather than claiming success.
+

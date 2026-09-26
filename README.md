@@ -18,9 +18,9 @@ The project strictly distinguishes between **Implemented**, **Scaffolded**, and 
 | **Video Ingest & Frames** | `src/loom/video/` | **Implemented** | Video container validation, stream metadata extraction, streaming frame extraction & manifest. |
 | **Capture Quality & Coverage** | `src/loom/capture/` | **Implemented** | Laplacian sharpness, exposure/contrast gating, thumbnail redundancy filter, and capture guidance. |
 | **Geometry Utilities** | `src/loom/geometry/` | **Implemented** | 3D coordinate primitives, vector math, bounding box calculation, 4x4 transform matrices. |
-| **Test Suite** | `tests/` | **Implemented** | 52 automated unit/integration tests verifying ingest, frames, quality, contracts, and pipeline. |
-| **Diagnostics & Tools** | `scripts/` | **Implemented** | `environment_check.py` and `generate_test_video.py` synthetic video generator. |
-| **3D Reconstruction Engine** | `src/loom/reconstruction/` | *Scaffolded* | `ReconstructionEngine` adapter interface, Meshroom & COLMAP adapters; execution planned for Phase 2. |
+| **Test Suite** | `tests/` | **Implemented** | 65 automated unit/integration tests verifying ingest, frames, quality, Meshroom adapter, contracts, and pipeline. |
+| **Diagnostics & Tools** | `scripts/` | **Implemented** | `environment_check.py`, `generate_test_video.py`, and `reconstruction_smoke_test.py`. |
+| **3D Reconstruction Engine** | `src/loom/reconstruction/` | **Implemented** | `MeshroomAdapter` subprocess execution, timeout handling, `cameras.sfm` registration metrics, artifact discovery (`--reconstruct`). |
 | **Point Cloud Processing** | `src/loom/pointcloud/` | *Scaffolded* | Outlier removal, voxel downsampling interfaces defined; implementation planned for Phase 3. |
 | **Mesh Processing & Repair** | `src/loom/mesh/` | *Scaffolded* | Cleaning, hole-filling, normal unification, Poisson meshing interfaces defined; planned for Phase 3. |
 | **Metric Scaling Subsystem** | `src/loom/scaling/` | *Scaffolded* | ArUco detection, calibration, and transform interfaces defined; planned for Phase 4. |
@@ -114,3 +114,16 @@ LOOM/
 # Run with development settings:
 .venv\Scripts\python -m loom --config configs/development.yaml --video path/to/video.mp4
 ```
+
+### 5. Phase 2 Reconstruction Run (3D Mesh Generation)
+```powershell
+# Run Phase 1 + Phase 2 (Meshroom 3D reconstruction):
+.venv\Scripts\python -m loom --video path/to/video.mp4 --reconstruct
+
+# Run with explicit Meshroom binary path:
+.venv\Scripts\python -m loom --video path/to/video.mp4 --reconstruct --meshroom-path "C:\Tools\Meshroom-2023.3.0\meshroom_batch.exe"
+
+# Diagnostic check for Meshroom availability:
+.venv\Scripts\python scripts/reconstruction_smoke_test.py
+```
+

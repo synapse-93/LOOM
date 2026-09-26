@@ -18,9 +18,11 @@ capture:
 
 reconstruction:
   backend: "meshroom"
+  binary_path: null
   quality: "low"
   timeout_seconds: 600
   workspace_dir: "outputs/dev/reconstruction"
+  keep_workspace: true
 
 pointcloud:
   clean_outliers: true

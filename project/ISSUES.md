@@ -6,7 +6,12 @@ This document tracks active blockers, known limitations, technical debt, researc
 
 ## 1. Active Blockers
 
-*No active blockers for immediate next milestone (Phase 1: Video Ingest & Frame Processing).*
+- **ISSUE-BLK-002: Meshroom / AliceVision Executable Missing on Development Host**
+  - **Discovered**: 2026-09-26 (Phase 2 Environment Discovery)
+  - **Description**: `meshroom_batch` is not installed on the development host system. System PATH, standard Windows program directories, and winget registry contain neither AliceVision nor Meshroom.
+  - **Impact**: Blocks live 3D reconstruction execution on real capture data. The `MeshroomAdapter` code is fully implemented and passes all unit tests with mocked subprocess execution, but running `--reconstruct` against live binaries requires the developer to install Meshroom (https://alicevision.org/#meshroom) and either add it to PATH or pass `--meshroom-path`.
+  - **Mitigation**: Implemented full headless mock tests (`test_meshroom_adapter.py`), clear diagnostic instructions via `scripts/reconstruction_smoke_test.py`, and explicit `--meshroom-path` CLI / config override.
+
 
 ---
 

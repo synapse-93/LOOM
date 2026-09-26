@@ -46,28 +46,28 @@ The pipeline follows a linear, staged flow where each stage consumes artifacts f
  8. Model Export          (export/)         ──> Final manufacturing-ready STL & build metadata
 ```
 
-### Stage 1: Video Processing (`src/video2print/video/`)
+### Stage 1: Video Processing (`src/loom/video/`)
 - **Responsibility**: Ingest video files (`.mp4`, `.mov`), extract frame streams, decode timestamps, camera metadata (if available), and validate video integrity.
 - **Contract**: Accepts a video path; outputs a sequence of extracted image frames with an extraction manifest (index, timestamp, resolution).
 
-### Stage 2: Frame Selection & Quality Assessment (`src/video2print/frames/`)
+### Stage 2: Frame Selection & Quality Assessment (`src/loom/capture/`)
 - **Responsibility**: Assess per-frame sharpness (e.g. Laplacian variance), motion blur, lighting/exposure, and inter-frame visual overlap.
 - **Contract**: Accepts extracted frames; outputs a selected subset of optimal keyframes suitable for Structure-from-Motion (SfM), rejecting blurry or redundant frames.
 
-### Stage 3: 3D Reconstruction Backend (`src/video2print/reconstruction/`)
+### Stage 3: 3D Reconstruction Backend (`src/loom/reconstruction/`)
 - **Responsibility**: Interface with external photogrammetry / SfM / MVS software.
 - **Contract**: Accepts a directory of selected keyframes; produces a raw 3D mesh (`.obj` or `.ply`) and camera poses.
 - **Replaceability**: Must implement the `ReconstructionEngine` abstract base class. Core pipeline code must never depend on Meshroom or COLMAP directly.
 
-### Stage 4: Mesh Processing & Cleanup (`src/video2print/mesh/`)
+### Stage 4: Mesh Processing & Cleanup (`src/loom/mesh/`)
 - **Responsibility**: Ingest raw reconstruction output; perform outlier removal, noise filtering, surface reconstruction (e.g. Screened Poisson), hole filling, and non-manifold element removal.
 - **Contract**: Accepts a raw mesh / point cloud; outputs a topologically clean surface mesh.
 
-### Stage 5: Metric Scaling Subsystem (`src/video2print/scaling/`)
+### Stage 5: Metric Scaling Subsystem (`src/loom/scaling/`)
 - **Responsibility**: Monocular SfM output has an arbitrary scale factor. This stage detects a physical reference target (e.g. ArUco marker / calibration target) in the capture images or point cloud to compute the metric conversion factor.
 - **Contract**: Accepts a cleaned mesh and reference detection data; outputs a scaled mesh transformed into physical units (millimeters: $1.0\text{ unit} = 1.0\text{ mm}$).
 
-### Stage 6: Geometry Validation (`src/video2print/validation/`)
+### Stage 6: Geometry Validation (`src/loom/validation/`)
 - **Responsibility**: Measure dimensions, compute bounding boxes, and quantitatively compare reconstructed geometry against known physical ground truth or reference CAD models.
 - **Contract**: Accepts scaled mesh and ground truth parameters; produces a structured validation report (absolute error, relative error, Hausdorff distance).
 

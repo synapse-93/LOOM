@@ -20,6 +20,8 @@ from loom.pipeline.artifacts import (
     VideoArtifact,
 )
 from loom.pipeline.stages import PipelineStage
+from loom.reconstruction.models import ReconstructionJobConfig, ReconstructionResult
+from loom.reconstruction.runner import ReconstructionRunner
 from loom.utils.paths import ensure_directory
 from loom.video.frames import FrameExtractor
 from loom.video.ingest import VideoIngestor
@@ -29,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class Phase1Result:
-    """Consolidated terminal output of the Phase 1 video-to-keyframes pipeline."""
+    """Consolidated terminal output of the Phase 1 & 2 video-to-keyframes pipeline."""
 
     run_id: str
     run_dir: Path
@@ -41,6 +43,8 @@ class Phase1Result:
     selected_frames_dir: Path
     raw_frames_dir: Path
     quality_results: list[FrameQualityResult]
+    reconstruction_result: Optional[ReconstructionResult] = None
+    reconstruction_report_path: Optional[Path] = None
 
 
 class PipelineRunner:
@@ -90,6 +94,7 @@ def run_phase1_pipeline(
     video_path: Path,
     config: LoomConfig,
     run_id: str | None = None,
+    reconstruct: bool = False,
 ) -> Phase1Result:
     """Execute the complete Phase 1 pipeline on a video file.
 
@@ -236,6 +241,95 @@ def run_phase1_pipeline(
             selected_frames_dir,
         )
 
+        # Stage 4: Optional 3D Reconstruction (Phase 2)
+        reconstruction_result: Optional[ReconstructionResult] = None
+        reconstruction_report_path: Optional[Path] = None
+
+        if reconstruct:
+            logger.info(
+                "=== Starting Phase 2: 3D Reconstruction (%s) ===",
+                config.reconstruction.backend,
+            )
+            recon_workspace = ensure_directory(base_run_dir / "reconstruction")
+            job_cfg = ReconstructionJobConfig(
+                workspace_dir=recon_workspace,
+                quality_preset=config.reconstruction.quality,
+                timeout_seconds=config.reconstruction.timeout_seconds,
+                binary_path=config.reconstruction.binary_path,
+                keep_workspace=config.reconstruction.keep_workspace,
+                additional_args=config.reconstruction.additional_args,
+            )
+
+            try:
+                engine = ReconstructionRunner.get_engine(
+                    config.reconstruction.backend,
+                    binary_path=config.reconstruction.binary_path,
+                )
+                if not engine.is_available():
+                    logger.warning(
+                        "Reconstruction backend '%s' executable is not available on host system.",
+                        config.reconstruction.backend,
+                    )
+                    reconstruction_result = ReconstructionResult(
+                        mesh_path=None,
+                        point_cloud_path=None,
+                        camera_poses_path=None,
+                        success=False,
+                        backend_name=config.reconstruction.backend,
+                        error_message=(
+                            f"Reconstruction backend '{config.reconstruction.backend}' executable not found. "
+                            "Ensure Meshroom is installed or configure 'binary_path'."
+                        ),
+                        input_frames_count=len(selected_copied_paths),
+                    )
+                else:
+                    reconstruction_result = engine.reconstruct(selected_copied_paths, job_cfg)
+            except Exception as e:
+                logger.error("Reconstruction execution failed: %s", e)
+                reconstruction_result = ReconstructionResult(
+                    mesh_path=None,
+                    point_cloud_path=None,
+                    camera_poses_path=None,
+                    success=False,
+                    backend_name=config.reconstruction.backend,
+                    error_message=str(e),
+                    input_frames_count=len(selected_copied_paths),
+                )
+
+            # Write reconstruction.json report
+            reconstruction_report_path = reports_dir / "reconstruction.json"
+            recon_report_dict = {
+                "run_id": run_id,
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "backend": reconstruction_result.backend_name,
+                "success": reconstruction_result.success,
+                "input_frames": reconstruction_result.input_frames_count,
+                "registered_cameras": reconstruction_result.registered_cameras_count,
+                "registration_ratio": reconstruction_result.registration_ratio,
+                "point_count": reconstruction_result.point_count,
+                "mesh_generated": (
+                    reconstruction_result.mesh_path is not None
+                    and reconstruction_result.mesh_path.is_file()
+                    and reconstruction_result.mesh_path.stat().st_size > 0
+                ),
+                "mesh_path": str(reconstruction_result.mesh_path) if reconstruction_result.mesh_path else None,
+                "point_cloud_path": (
+                    str(reconstruction_result.point_cloud_path)
+                    if reconstruction_result.point_cloud_path
+                    else None
+                ),
+                "camera_poses_path": (
+                    str(reconstruction_result.camera_poses_path)
+                    if reconstruction_result.camera_poses_path
+                    else None
+                ),
+                "execution_time_seconds": reconstruction_result.execution_time_seconds,
+                "workspace_dir": str(recon_workspace),
+                "error_message": reconstruction_result.error_message,
+            }
+            with open(reconstruction_report_path, "w", encoding="utf-8") as rf:
+                json.dump(recon_report_dict, rf, indent=2)
+
         return Phase1Result(
             run_id=run_id,
             run_dir=base_run_dir,
@@ -247,6 +341,8 @@ def run_phase1_pipeline(
             selected_frames_dir=selected_frames_dir,
             raw_frames_dir=raw_frames_dir,
             quality_results=quality_results,
+            reconstruction_result=reconstruction_result,
+            reconstruction_report_path=reconstruction_report_path,
         )
     finally:
         file_handler.flush()

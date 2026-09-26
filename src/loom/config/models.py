@@ -38,9 +38,12 @@ class ReconstructionConfig:
     """Settings for external 3D reconstruction engine."""
 
     backend: str = "meshroom"  # Options: 'meshroom', 'colmap'
+    binary_path: Optional[Path] = None
     quality: str = "medium"    # Options: 'low', 'medium', 'high'
     timeout_seconds: int = 1800
     workspace_dir: Optional[Path] = None
+    keep_workspace: bool = True
+    additional_args: list[str] = field(default_factory=list)
 
 
 @dataclass

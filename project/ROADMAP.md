@@ -55,17 +55,23 @@ Phase 10 <── Phase 9 <── Phase 8 <── Phase 7 <── Phase 6 <──
 ---
 
 ### Phase 2: Reconstruction Backend Integration
-- **Status**: NOT STARTED
+- **Status**: IN PROGRESS
 - **Objective**: Integrate external photogrammetry engine via an abstract adapter interface.
 - **Prerequisites**: Phase 1 complete; Meshroom / AliceVision binaries configured or mocked for CI.
-- **Expected Deliverables**:
-  - `src/video2print/reconstruction/base.py`: `ReconstructionEngine` abstract base class and dataclasses.
-  - `src/video2print/reconstruction/meshroom.py`: Subprocess adapter for AliceVision / Meshroom CLI.
-  - Mock reconstruction adapter for deterministic headless unit tests.
+- **Delivered**:
+  - `src/loom/reconstruction/meshroom.py`: Production `MeshroomAdapter` implementing argument construction, workspace isolation (`workspace/{input,output,cache,logs}`), safe timeout handling via `proc.communicate`, streaming stdout/stderr logging to `reconstruction.log`, AliceVision `cameras.sfm` JSON parsing (`registered_cameras_count`, `registration_ratio`), and multi-tier output artifact discovery (`texturedMesh.obj/ply`, `cloud_and_poses.ply`).
+  - `src/loom/reconstruction/runner.py`: `ReconstructionRunner` engine factory and job runner.
+  - `src/loom/pipeline/runner.py`: End-to-end integration accepting `--reconstruct`, invoking the adapter directly on Phase 1 selected frames, and generating `reports/reconstruction.json`.
+  - `src/loom/__main__.py`: CLI extended with `--reconstruct` and `--meshroom-path` flags and Phase 2 terminal summary.
+  - `docs/capture/capture_guide.md`: Standard physical capture protocol for real smartphone videos.
+  - `scripts/reconstruction_smoke_test.py`: Standalone environment diagnostic and live smoke test runner.
+  - `tests/unit/reconstruction/test_meshroom_adapter.py`: 13 comprehensive unit tests validating missing binary, invalid inputs, command construction, SFM parsing, artifact discovery, mocked successful subprocess, non-zero exit codes, timeouts, and missing mesh handling.
 - **Measurable Completion Criteria**:
-  - Adapter successfully builds execution command, manages scratch directories, runs subprocess, and returns `ReconstructionResult`.
-  - Generates valid `.obj` or `.ply` mesh from valid input frames.
-  - Gracefully catches timeouts or missing binaries with descriptive `ReconstructionError`.
+  - [x] Adapter builds execution command, manages scratch directories, runs subprocess, and returns `ReconstructionResult`.
+  - [x] Gracefully catches timeouts or missing binaries with descriptive `ReconstructionError`.
+  - [x] Discovers and validates expected reconstruction artifacts (`texturedMesh.obj`, `cameras.sfm`, `cloud_and_poses.ply`).
+  - [x] Generates standardized machine-readable `reconstruction.json`.
+  - [ ] Live reconstruction of real physical object with Meshroom (BLOCKED: `meshroom_batch` not installed on host machine; see `ISSUE-BLK-002`).
 
 ---
 
@@ -74,7 +80,7 @@ Phase 10 <── Phase 9 <── Phase 8 <── Phase 7 <── Phase 6 <──
 - **Objective**: Clean and repair raw photogrammetric output meshes.
 - **Prerequisites**: Phase 2 complete (or sample raw photogrammetry mesh fixtures available).
 - **Expected Deliverables**:
-  - `src/video2print/mesh/`: Outlier cluster removal, duplicate vertex welding, normal unification, surface hole filling, and Screened Poisson surface reconstruction.
+  - `src/loom/mesh/`: Outlier cluster removal, duplicate vertex welding, normal unification, surface hole filling, and Screened Poisson surface reconstruction.
   - Unit tests in `tests/unit/test_mesh_processing.py` on synthetic dirty meshes.
 - **Measurable Completion Criteria**:
   - Raw mesh with disconnected floating fragments is cleaned to a single primary component.
@@ -87,7 +93,7 @@ Phase 10 <── Phase 9 <── Phase 8 <── Phase 7 <── Phase 6 <──
 - **Objective**: Overcome monocular scale ambiguity by detecting physical fiducial markers and scaling the mesh to real-world millimeters.
 - **Prerequisites**: Phase 3 complete; `opencv-python` (ArUco module) and sample frames with known markers.
 - **Expected Deliverables**:
-  - `src/video2print/scaling/`: Fiducial detector (ArUco / reference board), 3D plane/point distance estimator, scale factor calculator ($s = d_{\text{physical}} / d_{\text{reconstructed}}$), and transformation matrix applicator.
+  - `src/loom/scaling/`: Fiducial detector (ArUco / reference board), 3D plane/point distance estimator, scale factor calculator ($s = d_{\text{physical}} / d_{\text{reconstructed}}$), and transformation matrix applicator.
   - Unit tests in `tests/unit/test_metric_scaling.py`.
 - **Measurable Completion Criteria**:
   - Given an unscaled mesh with a known 50.0 mm ArUco marker, correctly scales the mesh geometry so that the reference marker measures $50.0 \pm 1.0\text{ mm}$ in mesh coordinate space.
@@ -99,7 +105,7 @@ Phase 10 <── Phase 9 <── Phase 8 <── Phase 7 <── Phase 6 <──
 - **Objective**: Quantitatively compare reconstructed mesh geometry against known physical ground-truth dimensions and reference CAD geometry.
 - **Prerequisites**: Phase 4 complete; reference geometric test object (e.g. 50mm gauge cube).
 - **Expected Deliverables**:
-  - `src/video2print/validation/`: Bounding box calculator, cross-sectional caliper measurement simulator, Hausdorff distance calculator (mesh-to-mesh / point-to-mesh).
+  - `src/loom/validation/`: Bounding box calculator, cross-sectional caliper measurement simulator, Hausdorff distance calculator (mesh-to-mesh / point-to-mesh).
   - Validation reporting module generating structured JSON/Markdown reports.
 - **Measurable Completion Criteria**:
   - Computes exact dimensional error (absolute $\Delta\text{ mm}$ and percentage error) against ground truth.
@@ -112,8 +118,8 @@ Phase 10 <── Phase 9 <── Phase 8 <── Phase 7 <── Phase 6 <──
 - **Objective**: Automatically verify manufacturing readiness for additive fabrication (FDM/SLA).
 - **Prerequisites**: Phase 5 complete; `trimesh` geometry utilities.
 - **Expected Deliverables**:
-  - `src/video2print/printability/`: Watertightness checker (is_watertight), non-manifold edge detector, minimum wall thickness checker, overhang angle analyzer ($> 45^\circ$).
-  - `src/video2print/export/`: Binary STL exporter with optimal build orientation recommendation.
+  - `src/loom/printability/`: Watertightness checker (is_watertight), non-manifold edge detector, minimum wall thickness checker, overhang angle analyzer ($> 45^\circ$).
+  - `src/loom/export/`: Binary STL exporter with optimal build orientation recommendation.
 - **Measurable Completion Criteria**:
   - Successfully detects non-manifold edges or open holes in flawed test meshes.
   - Successfully exports clean, watertight models to standard binary `.stl` format verified readable by standard slicers.
@@ -165,7 +171,7 @@ Phase 10 <── Phase 9 <── Phase 8 <── Phase 7 <── Phase 6 <──
 - **Prerequisites**: All preceding phases complete.
 - **Expected Deliverables**:
   - Comprehensive engineering/research report with reproducible methodology.
-  - Clean CLI entrypoint (`video2print run input.mp4 --output-dir ./output`).
+  - Clean CLI entrypoint (`python -m loom --video input.mp4 --output-dir ./output`).
   - Project summary presentation materials and validated demo datasets.
 - **Measurable Completion Criteria**:
   - Any external engineer can clone the repository, install dependencies, run the test suite, and process a test capture end-to-end to obtain a validated STL.

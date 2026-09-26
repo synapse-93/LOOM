@@ -60,9 +60,12 @@ def _parse_dict_to_config(data: dict[str, Any]) -> LoomConfig:
         r = data["reconstruction"]
         config.reconstruction = ReconstructionConfig(
             backend=str(r.get("backend", config.reconstruction.backend)),
+            binary_path=Path(r["binary_path"]) if r.get("binary_path") else None,
             quality=str(r.get("quality", config.reconstruction.quality)),
             timeout_seconds=int(r.get("timeout_seconds", config.reconstruction.timeout_seconds)),
             workspace_dir=Path(r["workspace_dir"]) if r.get("workspace_dir") else None,
+            keep_workspace=bool(r.get("keep_workspace", config.reconstruction.keep_workspace)),
+            additional_args=list(r.get("additional_args", config.reconstruction.additional_args)),
         )
 
     if "pointcloud" in data and isinstance(data["pointcloud"], dict):

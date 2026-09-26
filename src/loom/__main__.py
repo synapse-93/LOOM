@@ -53,6 +53,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Validate configuration and stage prerequisites without executing compute.",
     )
     parser.add_argument(
+        "--reconstruct",
+        action="store_true",
+        help="Execute 3D reconstruction stage on selected keyframes (Phase 2).",
+    )
+    parser.add_argument(
+        "--meshroom-path",
+        type=Path,
+        default=None,
+        help="Explicit path to meshroom_batch executable binary.",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -78,6 +89,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.output_dir is not None:
         config.output_dir = args.output_dir
 
+    if args.meshroom_path is not None:
+        config.reconstruction.binary_path = args.meshroom_path
+
     video_input = args.video or config.input_video
 
     if args.dry_run:
@@ -99,7 +113,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         video_path = Path(video_input).resolve()
-        result = run_phase1_pipeline(video_path=video_path, config=config)
+        result = run_phase1_pipeline(
+            video_path=video_path,
+            config=config,
+            reconstruct=args.reconstruct,
+        )
 
         # Print clean, structured terminal summary
         meta = result.video_artifact
@@ -129,8 +147,31 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  * {note}")
 
         print("-" * 65)
-        print("Status: READY FOR RECONSTRUCTION (Phase 1 Complete)")
-        print("=" * 65 + "\n")
+        if result.reconstruction_result is None:
+            print("Status: READY FOR RECONSTRUCTION (Phase 1 Complete)")
+            print("=" * 65 + "\n")
+        else:
+            recon = result.reconstruction_result
+            print("\n" + "=" * 65)
+            print("LOOM: Phase 2 3D Reconstruction Summary")
+            print("=" * 65)
+            print(f"Backend:                {recon.backend}")
+            print(f"Status:                 {'SUCCESS' if recon.success else 'FAILED'}")
+            print(f"Input Frames:           {recon.input_frames_count}")
+            reg_cam = f"{recon.registered_cameras_count}" if recon.registered_cameras_count is not None else "N/A"
+            print(f"Registered Cameras:     {reg_cam}")
+            reg_ratio = f"{recon.registration_ratio:.1%}" if recon.registration_ratio is not None else "N/A"
+            print(f"Registration Ratio:     {reg_ratio}")
+            print(f"Point Cloud:            {recon.point_cloud_path.name if recon.point_cloud_path else 'None'}")
+            print(f"Mesh Output:            {recon.mesh_path if recon.mesh_path else 'None'}")
+            print(f"Execution Time:         {recon.execution_time_seconds:.2f} seconds")
+            print(f"Reconstruction Report:  {result.reconstruction_report_path}")
+            if recon.error_message:
+                print(f"Error Details:          {recon.error_message}")
+            print("-" * 65)
+            status_text = "RECONSTRUCTION COMPLETED (Raw Mesh Generated)" if recon.success else "RECONSTRUCTION FAILED"
+            print(f"Status: {status_text}")
+            print("=" * 65 + "\n")
 
         return 0
 

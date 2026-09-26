@@ -25,7 +25,7 @@ def test_reconstruction_runner_factory() -> None:
         ReconstructionRunner.get_engine("non_existent_engine")
 
 
-def test_meshroom_adapter_contract() -> None:
+def test_meshroom_adapter_contract(tmp_path: Path) -> None:
     """Verify MeshroomAdapter respects the ReconstructionEngine contract."""
     adapter = MeshroomAdapter()
     assert adapter.backend_name == "meshroom"
@@ -33,9 +33,9 @@ def test_meshroom_adapter_contract() -> None:
     is_avail = adapter.is_available()
     assert isinstance(is_avail, bool)
 
-    # reconstruct raises NotImplementedError during scaffold iteration
-    cfg = ReconstructionJobConfig(workspace_dir=Path("outputs/test"))
-    with pytest.raises(NotImplementedError, match="Phase 2"):
+    cfg = ReconstructionJobConfig(workspace_dir=tmp_path / "test_workspace")
+    # Empty frame list raises ValueError per Phase 2 validation
+    with pytest.raises(ValueError, match="empty list of frames"):
         adapter.reconstruct([], cfg)
 
 
