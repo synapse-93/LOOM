@@ -64,6 +64,8 @@ When documenting an experiment, use this exact structure:
 | EXP-004 | 2026-09-26 | Phase 2 Graceful Degradation Audit | 60 / 5 | Meshroom (Absent) | N/A (Blocked on binary) | N/A | N/A | **VERIFIED** |
 | EXP-005 | 2026-10-01 | Programmatic Mesh Fixtures (Cube, Multi-comp, Degenerate, Hole) | N/A (Mesh fixtures) | Trimesh / SciPy (Phase 3) | N/A (Preserved scale) | N/A | Yes (Repaired) | **VERIFIED** |
 | EXP-006 | 2026-10-01 | Photogrammetric Raw Mesh Processing & Phase 2/3 Handoff | N/A (Photogrammetry mesh) | Trimesh / SciPy / LOOM | N/A (Preserved SfM scale) | N/A | No (Open base preserved) | **VERIFIED** |
+| EXP-007 | 2026-10-01 | Phase 4 Synthetic Metric Scaling & Topology Audit | N/A (Synthetic box & mesh) | OpenCV / Trimesh / LOOM | 0.000 mm (Synthetic exact) | 0.000% | Preserved | **VERIFIED (Synthetic)** |
+
 
 ---
 
@@ -279,6 +281,39 @@ When documenting an experiment, use this exact structure:
 - **Conclusion & Next Steps**:
   - Phase 3 is robust against real photogrammetric defect characteristics and conservative boundary constraints.
   - Phase 2 $\to$ Phase 3 handoff and failure discrimination fully verified.
+
+---
+
+### EXP-007: Phase 4 Fiducial Metric Scaling & Coordinate Transformation Audit
+- **Date**: 2026-10-01
+- **Target Meshes**:
+  1. Synthetic 25.0 mm reference box (`tests/integration/scaling_pipeline/test_phase4_synthetic_scaling.py`)
+  2. Realistic photogrammetric raw mesh (`data/raw/sample_photogrammetry_raw.obj`)
+- **Scaling Parameters**:
+  - Known Ground Truth Physical Reference: $50.00\text{ mm}$ (ArUco Dict 4x4_50, Marker ID 0)
+  - Measured Reconstructed Reference: $25.000\text{ units}$ (simulated from 4 perimeter edge measurements $[25.0, 25.1, 24.9, 25.0]$)
+  - Transformation Origin: $(0.0, 0.0, 0.0)$
+- **Pipeline Configuration**:
+  - Module: `ScalingProcessor` (`src/loom/scaling/processor.py`)
+  - CLI: `python -m loom scale --input ... --reference-size 50.0 --measured-size 25.0`
+- **Measured Empirical Results**:
+  1. Synthetic Box (initial extents: $[25.0, 25.0, 25.0]$):
+     - Scale factor calculated: $50.0 / 25.0 = 2.000000$ (exact)
+     - Scaled extents: $[50.00000, 50.00000, 50.00000]$ (relative error: $0.000\%$)
+     - Vertex count before / after: $8 / 8$
+     - Face count before / after: $12 / 12$
+     - Face arrays: Identical (zero topology distortion)
+  2. Photogrammetric Mesh (`sample_photogrammetry_raw.obj`):
+     - Initial bounds: $[85.4, 22.1, -218.3865]$ to $[127.4, 64.1, -200.8]$
+     - Scaled bounds: $[170.8, 44.2, -436.7730]$ to $[254.8, 128.2, -401.6]$ (exact $2.0 \times$ scaling)
+     - Vertices: $574 \to 574$ preserved
+     - Faces: $1097 \to 1097$ preserved
+     - Execution time: $0.0055$ seconds
+     - Output report: `reports/scaling.json` successfully generated
+- **Status & Physical Validation Boundary**:
+  - Implementation & Synthetic Validation: **VERIFIED** (Exact deterministic scaling, zero topology distortion)
+  - Physical Ground Truth Accuracy Validation: **PENDING LIVE PHYSICAL EXPERIMENT** (Requires real captured video of physical object with physical ArUco fiducial once host photogrammetry backend is unblocked `ISSUE-BLK-002`)
+
 
 
 

@@ -9,7 +9,11 @@ from pathlib import Path
 from loom import __version__
 from loom.config.loader import load_config
 from loom.config.models import LoomConfig
-from loom.pipeline.runner import run_phase1_pipeline, run_phase3_mesh_pipeline
+from loom.pipeline.runner import (
+    run_phase1_pipeline,
+    run_phase3_mesh_pipeline,
+    run_phase4_scaling_pipeline,
+)
 from loom.reconstruction.models import ReconstructionStatus
 from loom.utils.logging import get_logger, setup_logging
 
@@ -108,6 +112,49 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Optional override for pipeline outputs directory.",
     )
+
+    scale_parser = subparsers.add_parser("scale", help="Phase 4 metric scaling using reference marker")
+    scale_parser.add_argument(
+        "--input",
+        "-i",
+        type=Path,
+        required=False,
+        default=None,
+        help="Path to cleaned input 3D mesh file (.obj, .ply, .stl)",
+    )
+    scale_parser.add_argument(
+        "--config",
+        "-c",
+        type=Path,
+        default=None,
+        help="Path to YAML configuration file.",
+    )
+    scale_parser.add_argument(
+        "--output-dir",
+        "-o",
+        type=Path,
+        default=None,
+        help="Optional override for pipeline outputs directory.",
+    )
+    scale_parser.add_argument(
+        "--reference-size",
+        type=float,
+        default=None,
+        help="Known physical reference marker size in millimeters (overrides config).",
+    )
+    scale_parser.add_argument(
+        "--measured-size",
+        type=float,
+        default=None,
+        help="Reconstructed reference marker size in reconstruction units.",
+    )
+    scale_parser.add_argument(
+        "--marker-id",
+        type=int,
+        default=None,
+        help="Target ArUco marker ID (overrides config).",
+    )
+
 
     args = parser.parse_args(argv)
     log_level = getattr(args, "log_level", "INFO")
@@ -217,7 +264,65 @@ def main(argv: list[str] | None = None) -> int:
         print("=" * 65 + "\n")
         return 0 if mesh_result.success else 1
 
+    if getattr(args, "subcommand", None) == "scale":
+        target_scale_mesh = getattr(args, "input", None) or getattr(args, "mesh", None)
+        if target_scale_mesh is None:
+            logger.error("No input mesh provided for scaling. Use 'loom scale --input <path>'")
+            return 1
+
+        mesh_path = Path(target_scale_mesh).resolve()
+        if not mesh_path.is_file():
+            logger.error("Input mesh file does not exist: %s", mesh_path)
+            return 1
+
+        ref_size = getattr(args, "reference_size", None)
+        if ref_size is not None:
+            config.scaling.marker_size_mm = float(ref_size)
+        marker_id_arg = getattr(args, "marker_id", None)
+        if marker_id_arg is not None:
+            config.scaling.marker_id = int(marker_id_arg)
+
+        measured_size = getattr(args, "measured_size", None)
+        if measured_size is None:
+            logger.error(
+                "No measured reference size provided. Use '--measured-size <float>' to specify reconstructed marker dimension."
+            )
+            return 1
+
+        logger.info("Executing Phase 4 metric scaling on: %s", mesh_path)
+        try:
+            scale_result, report_path = run_phase4_scaling_pipeline(
+                mesh_path=mesh_path,
+                reference_measurements=measured_size,
+                config=config,
+                output_dir=output_dir_arg,
+            )
+        except Exception as exc:
+            logger.error("Metric scaling failed: %s", exc)
+            return 1
+
+        ref_dict = scale_result.reference or {}
+        meas_dict = scale_result.measurement or {}
+
+        print("\n" + "=" * 65)
+        print("LOOM METRIC SCALING - Phase 4 Summary")
+        print("=" * 65)
+        print(f"Input Mesh:             {mesh_path.name}")
+        print(f"Reference Type:         {ref_dict.get('marker_type', 'aruco')}")
+        print(f"Marker ID:              {ref_dict.get('marker_id', 0)}")
+        print(f"Known Physical Size:    {ref_dict.get('known_size_mm', 'N/A')} mm")
+        print(f"Reconstructed Size:     {meas_dict.get('reconstructed_size', 'N/A')} units")
+        print(f"Scale Factor:           {scale_result.scale_factor:.6f}")
+        print(f"Output Mesh:            {scale_result.output_mesh_path}")
+        print(f"Report:                 {report_path}")
+        print(f"Execution Time:         {scale_result.execution_time_seconds:.4f} seconds")
+        print("-" * 65)
+        print(f"Status: {scale_result.status}")
+        print("=" * 65 + "\n")
+        return 0 if scale_result.success else 1
+
     video_input = getattr(args, "video", None) or config.input_video
+
 
     if getattr(args, "dry_run", False):
         logger.info("Dry-run mode selected. Validating configuration and prerequisites.")

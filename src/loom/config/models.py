@@ -82,10 +82,15 @@ class MeshConfig:
 class ScalingConfig:
     """Settings for fiducial metric scaling."""
 
+    enabled: bool = False
     strategy: str = "aruco"  # Options: 'aruco', 'manual'
     marker_id: int = 0
     marker_size_mm: float = 50.0
     dictionary: str = "DICT_4X4_50"
+    min_observations: int = 2
+    tolerance: float = 0.05
+    transformation_origin: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
 
 
 @dataclass

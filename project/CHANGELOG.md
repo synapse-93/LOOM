@@ -4,6 +4,33 @@ This log records chronological development iterations. Every agent completing me
 
 ---
 
+## Iteration 007 — Phase 4: Metric Scaling Subsystem Implementation & Synthetic Validation
+- **Date**: 2026-10-01
+- **Milestone**: Phase 4 — Metric Scaling (IMPLEMENTED & SYNTHETICALLY VERIFIED with 155 total tests; Physical Validation Pending Live Capture with ArUco Fiducial)
+- **Changes Implemented**:
+  - Audited OpenCV dependency: confirmed `opencv-python==5.0.0.93` provides full native `cv2.aruco` support (`ArucoDetector`, `DetectorParameters`, predefined dictionaries). Zero new dependencies added.
+  - Implemented typed domain exceptions in `src/loom/scaling/exceptions.py`: `ScalingError`, `ScalingConfigError`, `ReferenceDetectionError`, `ReferenceMeasurementError`, `ScaleEstimationError`, `MeshScalingError`, `MeshScalingValidationError`.
+  - Implemented typed data models in `src/loom/scaling/models.py`: `ReferenceMarker`, `MarkerObservation`, `ReferenceMeasurement`, `ScaleEstimate`, and `ScalingResult` with complete JSON serialization.
+  - Implemented ArUco detector in `src/loom/scaling/aruco.py`: dictionary lookup (`DICT_4X4_50`, etc.), 2D corner extraction, target ID filtering, and synthetic marker generation.
+  - Implemented measurement & scale estimation engine in `src/loom/scaling/measurement.py`: `MeasurementEngine` (multi-observation distance aggregation, 3D perimeter calculation, rejection of invalid/non-finite measurements) and `ScaleEstimator` ($s = d_{\text{phys}} / d_{\text{recon}}$ with variance and confidence).
+  - Implemented deterministic mesh transformer in `src/loom/scaling/transform.py`: `ScaleTransformer` applying vertex scaling $\mathbf{p}_{\text{scaled}} = \mathbf{p}_{\text{orig}} + s \cdot (\mathbf{p} - \mathbf{p}_{\text{orig}})$ about an explicit origin while keeping vertex count, face count, and topology 100% invariant.
+  - Implemented scaling orchestrator in `src/loom/scaling/processor.py`: `ScalingProcessor` handling input mesh validation, reference measurement, scale estimation, transformation, output validation, and JSON report generation.
+  - Updated configuration models in `src/loom/config/models.py` and `src/loom/config/loader.py`: `ScalingConfig` supporting flat keys and nested YAML syntax with backwards compatibility.
+  - Added standalone pipeline runner in `src/loom/pipeline/runner.py`: `run_phase4_scaling_pipeline()` generating `scaled_<stem>.obj` and `reports/scaling.json`.
+  - Added dedicated CLI subcommand in `src/loom/__main__.py`: `loom scale --input <mesh> --reference-size <mm> --measured-size <units>` with structured terminal summary.
+  - Authored comprehensive specification in `docs/scaling.md`.
+  - Added 31 unit and integration tests across `tests/unit/scaling/` and `tests/integration/scaling_pipeline/`.
+- **Verification**:
+  - Full test suite passed: **155 passed in 7.32s** (100% pass rate, 31 new tests + 124 existing tests, zero regressions, zero warnings).
+  - CLI execution verified: `python -m loom scale --input data/raw/sample_photogrammetry_raw.obj --reference-size 50.0 --measured-size 25.0` completed in 0.0055s, producing exact $2.0\times$ scaled mesh and `reports/scaling.json`.
+  - Synthetic box ($25\text{ mm} \to 50\text{ mm}$) verified with $0.000\%$ relative error and zero topology distortion.
+- **Next Steps**:
+  - Provision external reconstruction tool (`meshroom_batch` or `colmap`) to unblock live photogrammetry (`ISSUE-BLK-002`).
+  - Execute live smartphone video capture with physical ArUco fiducial to perform physical ground truth accuracy validation.
+  - Proceed to Phase 5 (Geometry & Ground-Truth Dimensional Validation).
+
+---
+
 ## Iteration 006 — Phase 2 & Phase 3 Validation, Hardening & Pipeline Handoff Audit
 - **Date**: 2026-10-01
 - **Milestone**: Phase 2 — Reconstruction Backend Integration (Adapter & Contracts Verified; Host Binary BLOCKED `ISSUE-BLK-002`); Phase 3 — Raw Geometry & Mesh Processing (VERIFIED & AUDITED with 124 total tests)

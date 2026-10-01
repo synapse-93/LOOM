@@ -15,6 +15,9 @@ from loom.capture.quality import FrameQualityAssessor, FrameQualityResult
 from loom.config.models import LoomConfig, MeshConfig
 from loom.mesh.models import MeshProcessingResult
 from loom.mesh.processor import MeshProcessor
+from loom.scaling.models import ScalingResult
+from loom.scaling.processor import ScalingProcessor
+
 
 from loom.pipeline.artifacts import (
     BaseArtifact,
@@ -477,3 +480,72 @@ def run_phase3_mesh_pipeline(
         file_handler.flush()
         loom_logger.removeHandler(file_handler)
         file_handler.close()
+
+
+def run_phase4_scaling_pipeline(
+    mesh_path: Path,
+    reference_measurements: Optional[float | Sequence[float] | Sequence[tuple[float, float, float] | Sequence[float] | np.ndarray]] = None,
+    config: Optional[LoomConfig] = None,
+    output_dir: Optional[Path] = None,
+    run_id: Optional[str] = None,
+    origin: Optional[tuple[float, float, float]] = None,
+) -> tuple[ScalingResult, Path]:
+    """Execute standalone Phase 4 metric scaling pipeline.
+
+    Args:
+        mesh_path: Path to cleaned 3D mesh (.obj, .ply, .stl).
+        reference_measurements: Measured size, list of lengths, or 4 3D corners.
+        config: Loom configuration.
+        output_dir: Optional directory override.
+        run_id: Optional explicit run identifier; generated if None.
+        origin: Optional explicit transformation origin.
+
+    Returns:
+        Tuple of (ScalingResult, scaling_report_path).
+    """
+    resolved_mesh = Path(mesh_path).resolve()
+    if not resolved_mesh.is_file():
+        raise FileNotFoundError(f"Input mesh file not found: {resolved_mesh}")
+
+    active_config = config or LoomConfig()
+
+    if run_id is None:
+        timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        sanitized_stem = re.sub(r"[^a-zA-Z0-9_-]", "_", resolved_mesh.stem)
+        run_id = f"run_{timestamp_str}_{sanitized_stem}"
+
+    base_run_dir = ensure_directory(output_dir or (active_config.output_dir / "runs" / run_id))
+    scaling_dir = ensure_directory(base_run_dir / "scaling")
+    reports_dir = ensure_directory(base_run_dir / "reports")
+    logs_dir = ensure_directory(base_run_dir / "logs")
+
+    log_file = logs_dir / "scaling.log"
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    )
+    loom_logger = logging.getLogger("loom")
+    loom_logger.addHandler(file_handler)
+
+    try:
+        output_mesh_path = scaling_dir / f"scaled_{resolved_mesh.stem}.obj"
+        processor = ScalingProcessor(active_config.scaling)
+        result = processor.process(
+            input_mesh_path=resolved_mesh,
+            output_mesh_path=output_mesh_path,
+            reference_measurements=reference_measurements,
+            origin=origin,
+            raise_on_error=True,
+        )
+
+        scaling_report_path = reports_dir / "scaling.json"
+        with open(scaling_report_path, "w", encoding="utf-8") as f:
+            json.dump(result.to_dict(), f, indent=2)
+
+        return result, scaling_report_path
+    finally:
+        file_handler.flush()
+        loom_logger.removeHandler(file_handler)
+        file_handler.close()
+

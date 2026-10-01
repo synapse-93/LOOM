@@ -89,12 +89,30 @@ def _parse_dict_to_config(data: dict[str, Any]) -> LoomConfig:
 
     if "scaling" in data and isinstance(data["scaling"], dict):
         s = data["scaling"]
+        enabled = bool(s.get("enabled", config.scaling.enabled))
+        ref = s.get("reference", {}) if isinstance(s.get("reference"), dict) else {}
+        meas = s.get("measurement", {}) if isinstance(s.get("measurement"), dict) else {}
+
+        strategy = str(ref.get("type", s.get("strategy", config.scaling.strategy)))
+        marker_id = int(ref.get("marker_id", s.get("marker_id", config.scaling.marker_id)))
+        marker_size = float(ref.get("size_mm", s.get("marker_size_mm", config.scaling.marker_size_mm)))
+        dictionary = str(ref.get("dictionary", s.get("dictionary", config.scaling.dictionary)))
+        min_obs = int(meas.get("min_observations", s.get("min_observations", config.scaling.min_observations)))
+        tolerance = float(meas.get("tolerance", s.get("tolerance", config.scaling.tolerance)))
+        origin_raw = s.get("transformation_origin", config.scaling.transformation_origin)
+        origin = tuple(float(x) for x in origin_raw) if origin_raw else (0.0, 0.0, 0.0)
+
         config.scaling = ScalingConfig(
-            strategy=str(s.get("strategy", config.scaling.strategy)),
-            marker_id=int(s.get("marker_id", config.scaling.marker_id)),
-            marker_size_mm=float(s.get("marker_size_mm", config.scaling.marker_size_mm)),
-            dictionary=str(s.get("dictionary", config.scaling.dictionary)),
+            enabled=enabled,
+            strategy=strategy,
+            marker_id=marker_id,
+            marker_size_mm=marker_size,
+            dictionary=dictionary,
+            min_observations=min_obs,
+            tolerance=tolerance,
+            transformation_origin=origin,
         )
+
 
     if "validation" in data and isinstance(data["validation"], dict):
         val = data["validation"]

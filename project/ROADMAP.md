@@ -115,14 +115,31 @@ Phase 10 <── Phase 9 <── Phase 8 <── Phase 7 <── Phase 6 <──
 ---
 
 ### Phase 4: Metric Scaling Subsystem
-- **Status**: NOT STARTED
-- **Objective**: Overcome monocular scale ambiguity by detecting physical fiducial markers and scaling the mesh to real-world millimeters.
-- **Prerequisites**: Phase 3 complete; `opencv-python` (ArUco module) and sample frames with known markers.
-- **Expected Deliverables**:
-  - `src/loom/scaling/`: Fiducial detector (ArUco / reference board), 3D plane/point distance estimator, scale factor calculator ($s = d_{\text{physical}} / d_{\text{reconstructed}}$), and transformation matrix applicator.
-  - Unit tests in `tests/unit/test_metric_scaling.py`.
+- **Status**: IMPLEMENTED / SYNTHETICALLY VERIFIED (Physical Validation Pending Live Capture with ArUco Fiducial)
+- **Objective**: Overcome monocular scale ambiguity by measuring a known physical reference marker (ArUco fiducial) and scaling the cleaned Phase 3 intermediate mesh to real-world millimeters.
+- **Prerequisites**: Phase 3 complete; `opencv-python` (`cv2.aruco`) and `trimesh`.
+- **Delivered**:
+  - `src/loom/scaling/models.py`: Typed data models (`ReferenceMarker`, `MarkerObservation`, `ReferenceMeasurement`, `ScaleEstimate`, `ScalingResult`).
+  - `src/loom/scaling/aruco.py`: `ArucoDetector` resolving dictionary names (`DICT_4X4_50`, etc.), detecting 2D corners, filtering target marker IDs, and generating synthetic markers.
+  - `src/loom/scaling/measurement.py`: `MeasurementEngine` (multi-observation distance aggregation, 3D perimeter calculation) and `ScaleEstimator` ($s = d_{\text{phys}} / d_{\text{recon}}$ with variance and confidence).
+  - `src/loom/scaling/transform.py`: `ScaleTransformer` applying deterministic vertex scaling $\mathbf{p}_{\text{scaled}} = \mathbf{p}_{\text{orig}} + s \cdot (\mathbf{p} - \mathbf{p}_{\text{orig}})$ about an explicit origin while keeping vertex count, face count, and topology 100% invariant.
+  - `src/loom/scaling/processor.py`: `ScalingProcessor` orchestrating validation, measurement, scale estimation, transformation, output validation, and JSON report generation.
+  - `src/loom/scaling/calibration.py`: `ScaleCalibrator` maintaining backward-compatible calibration contract.
+  - `src/loom/pipeline/runner.py`: `run_phase4_scaling_pipeline()` generating `scaled_<stem>.obj` and `reports/scaling.json`.
+  - `src/loom/__main__.py`: Dedicated CLI subcommand `python -m loom scale --input <mesh> --reference-size <mm> --measured-size <units>` and structured terminal summary.
+  - `docs/scaling.md`: Architectural specification, mathematical formulation, CLI manual, and physical validation boundary.
+  - 31 unit and integration tests across `tests/unit/scaling/` and `tests/integration/scaling_pipeline/` (155 total tests passing repository-wide).
 - **Measurable Completion Criteria**:
-  - Given an unscaled mesh with a known 50.0 mm ArUco marker, correctly scales the mesh geometry so that the reference marker measures $50.0 \pm 1.0\text{ mm}$ in mesh coordinate space.
+  - [x] Scaling contracts implemented and JSON-serializable.
+  - [x] ArUco configuration and detection implemented via OpenCV without adding dependencies.
+  - [x] Reference measurement interface implemented with robust statistical aggregation.
+  - [x] Scale factor calculation implemented ($s = d_{\text{phys}} / d_{\text{recon}}$).
+  - [x] Mesh transformation implemented deterministically about explicit origin.
+  - [x] Topology and face indexing preserved with zero unintended deformation.
+  - [x] Machine-readable `reports/scaling.json` generated in standard run hierarchy.
+  - [x] CLI execution tested and verified (`python -m loom scale ...`).
+  - [x] Synthetic integration tests pass with exact dimensional scaling.
+  - [ ] Live physical ground truth accuracy validation (Awaiting real object capture with physical ArUco fiducial and host photogrammetry backend `ISSUE-BLK-002`).
 
 ---
 

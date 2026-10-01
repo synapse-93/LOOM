@@ -19,12 +19,13 @@ The project strictly distinguishes between **Implemented**, **Scaffolded**, and 
 | **Capture Quality & Coverage** | `src/loom/capture/` | **Implemented** | Laplacian sharpness, exposure/contrast gating, thumbnail redundancy filter, and capture guidance. |
 | **Geometry Utilities** | `src/loom/geometry/` | **Implemented** | 3D coordinate primitives, vector math, bounding box calculation, 4x4 transform matrices. |
 | **Mesh Processing & Cleanup** | `src/loom/mesh/` | **Implemented** | Read-only diagnostics, component filtering, invalid geometry cleanup, conservative defect repair, outward normal unification (`--mesh`, `geometry`). |
-| **Test Suite** | `tests/` | **Implemented** | 124 automated unit/integration tests verifying ingest, frames, quality, Meshroom adapter, mesh processing, photogrammetry defect audit, and pipelines. |
+| **Test Suite** | `tests/` | **Implemented** | 155 automated unit/integration tests verifying ingest, frames, quality, Meshroom adapter, mesh processing, photogrammetry audit, ArUco detection, and metric scaling. |
 | **Diagnostics & Tools** | `scripts/` | **Implemented** | `environment_check.py`, `generate_test_video.py`, and `reconstruction_smoke_test.py`. |
 | **3D Reconstruction Engine** | `src/loom/reconstruction/` | **Implemented** | `MeshroomAdapter` subprocess execution, timeout handling, 7-state failure classification, `cameras.sfm` registration metrics, artifact discovery (`--reconstruct`). Live execution blocked pending host binary installation. |
 | **Point Cloud Processing** | `src/loom/pointcloud/` | *Scaffolded* | Outlier removal, voxel downsampling interfaces defined. |
-| **Metric Scaling Subsystem** | `src/loom/scaling/` | *Scaffolded* | ArUco detection, calibration, and transform interfaces defined; planned for Phase 4. |
+| **Metric Scaling Subsystem** | `src/loom/scaling/` | **Implemented** | ArUco fiducial detection, measurement engine, scale estimator, topology-preserving mesh transformer, scaling processor, and CLI (`scale`). Synthetic validation verified. |
 | **Geometry Validation** | `src/loom/validation/` | *Scaffolded* | Error models, dimension measurement, JSON report generation defined; planned for Phase 5. |
+
 | **Printability Analysis** | `src/loom/printability/` | *Scaffolded* | Manifold, watertight, thickness, overhang checks defined; planned for Phase 6. |
 | **Manufacturing Export** | `src/loom/export/` | *Scaffolded* | Binary STL export, cryptographic manifest, and summary report generator defined; planned for Phase 7. |
 
