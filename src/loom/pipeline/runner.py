@@ -12,11 +12,15 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from loom.capture.quality import FrameQualityAssessor, FrameQualityResult
-from loom.config.models import LoomConfig
+from loom.config.models import LoomConfig, MeshConfig
+from loom.mesh.models import MeshProcessingResult
+from loom.mesh.processor import MeshProcessor
+
 from loom.pipeline.artifacts import (
     BaseArtifact,
     CaptureAnalysisArtifact,
     FrameSetArtifact,
+    MeshArtifact,
     VideoArtifact,
 )
 from loom.pipeline.stages import PipelineStage
@@ -35,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class Phase1Result:
-    """Consolidated terminal output of the Phase 1 & 2 video-to-keyframes pipeline."""
+    """Consolidated terminal output of the Phase 1, 2, and 3 pipeline."""
 
     run_id: str
     run_dir: Path
@@ -49,6 +53,8 @@ class Phase1Result:
     quality_results: list[FrameQualityResult]
     reconstruction_result: Optional[ReconstructionResult] = None
     reconstruction_report_path: Optional[Path] = None
+    mesh_processing_result: Optional[MeshProcessingResult] = None
+    geometry_report_path: Optional[Path] = None
 
 
 class PipelineRunner:
@@ -99,6 +105,7 @@ def run_phase1_pipeline(
     config: LoomConfig,
     run_id: str | None = None,
     reconstruct: bool = False,
+    clean_mesh: bool = False,
 ) -> Phase1Result:
     """Execute the complete Phase 1 pipeline on a video file.
 
@@ -352,6 +359,30 @@ def run_phase1_pipeline(
             with open(reconstruction_report_path, "w", encoding="utf-8") as rf:
                 json.dump(recon_report_dict, rf, indent=2)
 
+        # Stage 5: Optional Mesh Processing (Phase 3)
+        mesh_processing_result: Optional[MeshProcessingResult] = None
+        geometry_report_path: Optional[Path] = None
+
+        if (
+            clean_mesh
+            and reconstruction_result is not None
+            and reconstruction_result.success
+            and reconstruction_result.mesh_path is not None
+            and reconstruction_result.mesh_path.is_file()
+        ):
+            logger.info("=== Starting Phase 3: Mesh Processing on Reconstructed Mesh ===")
+            geometry_dir = ensure_directory(base_run_dir / "geometry")
+            cleaned_mesh_path = geometry_dir / f"cleaned_{reconstruction_result.mesh_path.stem}.obj"
+            processor = MeshProcessor(config.mesh)
+            mesh_processing_result = processor.process(
+                input_mesh_path=reconstruction_result.mesh_path,
+                output_mesh_path=cleaned_mesh_path,
+                config=config.mesh,
+            )
+            geometry_report_path = reports_dir / "geometry.json"
+            with open(geometry_report_path, "w", encoding="utf-8") as gf:
+                json.dump(mesh_processing_result.to_dict(), gf, indent=2)
+
         return Phase1Result(
             run_id=run_id,
             run_dir=base_run_dir,
@@ -365,7 +396,67 @@ def run_phase1_pipeline(
             quality_results=quality_results,
             reconstruction_result=reconstruction_result,
             reconstruction_report_path=reconstruction_report_path,
+            mesh_processing_result=mesh_processing_result,
+            geometry_report_path=geometry_report_path,
         )
+    finally:
+        file_handler.flush()
+        loom_logger.removeHandler(file_handler)
+        file_handler.close()
+
+
+def run_phase3_mesh_pipeline(
+    mesh_path: Path,
+    config: Optional[LoomConfig] = None,
+    output_dir: Optional[Path] = None,
+    run_id: Optional[str] = None,
+) -> tuple[MeshProcessingResult, Path]:
+    """Execute standalone Phase 3 raw geometry and mesh processing pipeline.
+
+    Args:
+        mesh_path: Path to raw input 3D mesh (.obj, .ply, .stl).
+        config: Loom configuration.
+        output_dir: Optional directory override.
+        run_id: Optional explicit run identifier; generated if None.
+
+    Returns:
+        Tuple of (MeshProcessingResult, geometry_report_path).
+    """
+    resolved_mesh = Path(mesh_path).resolve()
+    if not resolved_mesh.is_file():
+        raise FileNotFoundError(f"Input mesh file not found: {resolved_mesh}")
+
+    active_config = config or LoomConfig()
+
+    if run_id is None:
+        timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        sanitized_stem = re.sub(r"[^a-zA-Z0-9_-]", "_", resolved_mesh.stem)
+        run_id = f"run_{timestamp_str}_{sanitized_stem}"
+
+    base_run_dir = ensure_directory(output_dir or (active_config.output_dir / "runs" / run_id))
+    geometry_dir = ensure_directory(base_run_dir / "geometry")
+    reports_dir = ensure_directory(base_run_dir / "reports")
+    logs_dir = ensure_directory(base_run_dir / "logs")
+
+    log_file = logs_dir / "mesh_processing.log"
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    )
+    loom_logger = logging.getLogger("loom")
+    loom_logger.addHandler(file_handler)
+
+    try:
+        output_mesh_path = geometry_dir / f"cleaned_{resolved_mesh.stem}.obj"
+        processor = MeshProcessor(active_config.mesh)
+        result = processor.process(resolved_mesh, output_mesh_path, active_config.mesh)
+
+        geometry_report_path = reports_dir / "geometry.json"
+        with open(geometry_report_path, "w", encoding="utf-8") as f:
+            json.dump(result.to_dict(), f, indent=2)
+
+        return result, geometry_report_path
     finally:
         file_handler.flush()
         loom_logger.removeHandler(file_handler)

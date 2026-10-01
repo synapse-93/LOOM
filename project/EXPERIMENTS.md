@@ -62,8 +62,10 @@ When documenting an experiment, use this exact structure:
 | EXP-002 | 2026-09-26 | Host Environment & Mocked Meshroom | 3 / 3 (Mocked) | Meshroom (Mocked) | N/A | N/A | N/A | **VERIFIED** |
 | EXP-003 | 2026-09-26 | Redundancy Filter Audit | 60 / 5 | Phase 1 Quality | N/A | N/A | N/A | **VERIFIED** |
 | EXP-004 | 2026-09-26 | Phase 2 Graceful Degradation Audit | 60 / 5 | Meshroom (Absent) | N/A (Blocked on binary) | N/A | N/A | **VERIFIED** |
+| EXP-005 | 2026-10-01 | Programmatic Mesh Fixtures (Cube, Multi-comp, Degenerate, Hole) | N/A (Mesh fixtures) | Trimesh / SciPy (Phase 3) | N/A (Preserved scale) | N/A | Yes (Repaired) | **VERIFIED** |
 
 ---
+
 
 ### EXP-001: Synthetic Video Ingest & Optical Quality Pipeline Verification
 - **Date**: 2026-09-26
@@ -166,5 +168,59 @@ When documenting an experiment, use this exact structure:
 - **Conclusion & Next Steps**:
   - Phase 2 contracts, failure classifications, and pipeline integration verified empirically on real synthetic pipeline execution.
   - Live reconstruction remains blocked pending installation of Meshroom 2023.3 binary.
+
+---
+
+### EXP-005: Phase 3 Geometry Processing & Fixture Verification Audit
+- **Date**: 2026-10-01
+- **Target Fixtures**: Deterministic 3D mesh fixtures generated via `tests/fixtures/mesh_fixtures.py`:
+  - `clean_cube`: 8 vertices, 12 faces, 1 component, 0 boundary edges.
+  - `disconnected`: 12 vertices, 16 faces, 2 components (cube + satellite tetrahedron).
+  - `degenerate`: 11 vertices, 13 faces, collinear zero-area triangle.
+  - `hole`: 8 vertices, 11 faces, 3 boundary edges (missing face).
+  - `large_hole`: Cylinder rim with 32 boundary edges (> 20 edge repair threshold).
+  - `duplicate_and_unreferenced`: Cube with duplicate face and floating vertices.
+- **Pipeline Configuration**:
+  - Module: `MeshProcessor` (`src/loom/mesh/processor.py`)
+  - Component strategy: `largest` (discard disconnected satellites)
+  - Degenerate removal: `remove_degenerate_faces=True` (cross-product area threshold <= 1e-12)
+  - Duplicate & orphan removal: `remove_duplicate_faces=True`, `remove_unreferenced_vertices=True`
+  - Conservative hole repair: `close_holes=True`, `max_hole_edges=30`
+  - Normal unification: `unify_normals=True` (BFS winding propagation + outward normals)
+- **Measured Empirical Results**:
+  1. `clean_cube`:
+     - Before: 8 vertices, 12 faces, 1 component, 0 boundary loops, volume 8.000, area 24.000, status VALID.
+     - Actions: 0 components removed, 0 degenerate faces removed, 0 repairs attempted.
+     - After: 8 vertices, 12 faces, 1 component, watertight True, status VALID.
+     - Processing time: 0.0069s.
+  2. `disconnected`:
+     - Before: 12 vertices, 16 faces, 2 components (12 faces and 4 faces).
+     - Actions: 1 component removed, 4 faces removed, 4 vertices removed.
+     - After: 8 vertices, 12 faces, 1 component, watertight True, status SUCCESS.
+     - Processing time: 0.0075s.
+  3. `degenerate`:
+     - Before: 11 vertices, 13 faces, 1 degenerate zero-area triangle, status WARNING.
+     - Actions: 1 degenerate face removed, 3 unreferenced vertices purged.
+     - After: 8 vertices, 12 faces, 1 component, watertight True, status SUCCESS.
+     - Processing time: 0.0068s.
+  4. `hole`:
+     - Before: 8 vertices, 11 faces, 1 boundary loop (3 edges), is_watertight False, status WARNING.
+     - Actions: 1 eligible boundary loop detected and repaired via ear-clipping (1 triangle added).
+     - After: 8 vertices, 12 faces, 0 boundary loops, watertight True, status SUCCESS.
+     - Processing time: 0.0073s.
+  5. `large_hole` (32 boundary edges, max_hole_edges=20):
+     - Before: 33 vertices, 32 faces, 1 boundary loop of 32 edges.
+     - Actions: 1 hole detected, 0 eligible (32 > 20), 0 repaired, 1 remaining defect.
+     - Defect report: Recorded in `defect_details` with reason "Loop edge count (32) exceeds max_hole_edges limit (20)".
+     - After: 32 faces preserved unchanged (conservative non-destructive behavior verified).
+  6. Coordinate Preservation Verification:
+     - Shifted cube by [+100.0, +200.0, +300.0]:
+     - Bounding box before: min [99.0, 199.0, 299.0], extents [2.0, 2.0, 2.0].
+     - Bounding box after: min [99.0, 199.0, 299.0], extents [2.0, 2.0, 2.0].
+     - Verified exact floating-point preservation with zero unwanted origin centering or unit scaling.
+- **Conclusion & Next Steps**:
+  - Phase 3 geometry processing, component filtering, invalid cleanup, conservative defect repair, and coordinate preservation are empirically verified and deterministic.
+  - Ready to receive real photogrammetric meshes from Phase 2 once host reconstruction backend is provisioned (`ISSUE-BLK-002`).
+
 
 

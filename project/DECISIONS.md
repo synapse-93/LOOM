@@ -12,8 +12,12 @@ This document records the architectural and engineering decisions accepted for V
 - [ADR-004: Known-Size Reference Marker (ArUco) for Development Metric Scaling](#adr-004-known-size-reference-marker-aruco-for-development-metric-scaling)
 - [ADR-005: Deterministic Optical Quality Assessment and Thumbnail Redundancy Filtering](#adr-005-deterministic-optical-quality-assessment-and-thumbnail-redundancy-filtering)
 - [ADR-006: Meshroom Subprocess Execution, Timeout Safety, and Artifact Discovery Architecture](#adr-006-meshroom-subprocess-execution-timeout-safety-and-artifact-discovery-architecture)
+- [ADR-007: Explicit Reconstruction Failure Classification and Decoupled Multi-Tier Artifact Model](#adr-007-explicit-reconstruction-failure-classification-and-decoupled-multi-tier-artifact-model)
+- [ADR-008: Conservative Defect Repair and Graph-Engine Independence in Mesh Processing](#adr-008-conservative-defect-repair-and-graph-engine-independence-in-mesh-processing)
+- [ADR-009: Coordinate Value and Physical Scale Preservation During Mesh Cleanup & Normalization](#adr-009-coordinate-value-and-physical-scale-preservation-during-mesh-cleanup--normalization)
 
 ---
+
 
 ## ADR-001: Standardization on Python 3.10.11 Runtime
 
@@ -142,5 +146,44 @@ This document records the architectural and engineering decisions accepted for V
 - **Consequences**:
   - Downstream pipeline stages and CLI summary outputs explicitly inspect `status` and can access partial artifacts when available.
   - When the photogrammetry backend is not installed on the host system, the pipeline completes Phase 1 successfully, gracefully logs `BINARY_UNAVAILABLE`, and outputs a valid `reconstruction.json` without crashing.
+
+---
+
+## ADR-008: Conservative Defect Repair and Graph-Engine Independence in Mesh Processing
+
+- **Status**: ACCEPTED
+- **Date**: 2026-10-01
+- **Decision**: Implement conservative boundary defect repair using pure NumPy edge uniqueness, 2D ear-clipping triangulation, and BFS normal/winding propagation, without relying on external networkx graph packages or AI mesh infilling tools.
+- **Reason**:
+  - In photogrammetry, real reconstructed surfaces may legitimately feature open boundaries (e.g. uncaptured bases or flat supporting tables). Blindly filling all holes deforms authentic geometry.
+  - Standard Trimesh convenience methods (`fill_holes`, `fix_winding`, `split`) conditionally invoke `networkx.cycle_basis`, which fails if optional graph dependencies are absent.
+  - Pure NumPy edge analysis and breadth-first winding propagation runs deterministically in milliseconds, eliminates library fragility, and respects user-configured edge thresholds (`max_hole_edges`).
+  - Ineligible holes ($> \text{max\_hole\_edges}$) are honestly logged as preserved defects in `defect_details` rather than triggering hidden geometry deformation.
+- **Alternatives Considered**:
+  - *Blind automatic hole filling (`trimesh.repair.fill_holes`)*: Distorts genuine geometry on large complex contours and requires networkx.
+  - *Poisson surface reconstruction for all inputs*: Blurs sharp mechanical edges, closes genuine openings indiscriminately, and introduces high computational overhead.
+  - *Neural AI inpainting (e.g., Point-E, NeRF-based mesh completion)*: Prohibited by `.agents/rules/python.md`; non-deterministic and computationally excessive.
+- **Consequences**:
+  - Small, simple holes ($\le 30$ edges) are cleanly closed, restoring watertightness on reparable geometries.
+  - Large or open boundary loops are safely preserved and transparently reported in `reports/geometry.json`.
+
+---
+
+## ADR-009: Coordinate Value and Physical Scale Preservation During Mesh Cleanup & Normalization
+
+- **Status**: ACCEPTED
+- **Date**: 2026-10-01
+- **Decision**: Strictly preserve original vertex coordinate positions and coordinate scale throughout Phase 3 mesh processing, prohibiting origin recentering, bounding box normalization, or unit scaling until Phase 4 (Metric Scaling).
+- **Reason**:
+  - Photogrammetric reconstruction backends produce 3D geometry in an arbitrary coordinate frame where camera positions, fiducial reference markers, and object surfaces share a common metric or relative scale.
+  - Normalizing mesh size to a unit cube or translating bounding box minimum to origin (`(0, 0, 0)`) breaks camera pose correspondence and destroys the spatial relationship needed to detect and measure fiducial reference markers (ArUco) in Phase 4.
+  - Physical scale interpretation is strictly reserved for Phase 4.
+- **Alternatives Considered**:
+  - *Auto-centering mesh bounding box at origin*: Destroys world coordinate alignment with photogrammetric SfM camera coordinates.
+  - *Normalizing vertices to $[-1, 1]$ unit sphere/cube*: Premature scale alteration that makes downstream physical measurement impossible.
+- **Consequences**:
+  - Mesh normalization in Phase 3 is purely representational: re-indexing vertex arrays, removing degenerate/duplicate faces, and orienting outward normals.
+  - Surviving vertex positions remain exactly identical in their native coordinate frame.
+
 
 

@@ -81,15 +81,31 @@ Phase 10 <── Phase 9 <── Phase 8 <── Phase 7 <── Phase 6 <──
 ---
 
 ### Phase 3: Raw Geometry Processing & Mesh Cleanup
-- **Status**: NOT STARTED
-- **Objective**: Clean and repair raw photogrammetric output meshes.
-- **Prerequisites**: Phase 2 complete (or sample raw photogrammetry mesh fixtures available).
-- **Expected Deliverables**:
-  - `src/loom/mesh/`: Outlier cluster removal, duplicate vertex welding, normal unification, surface hole filling, and Screened Poisson surface reconstruction.
-  - Unit tests in `tests/unit/test_mesh_processing.py` on synthetic dirty meshes.
+- **Status**: IMPLEMENTED / FIXTURE-TESTED (Live Reconstruction: Awaiting Host Photogrammetry Backend)
+- **Objective**: Clean and repair raw photogrammetric output meshes, producing a verified, normalized intermediate mesh and machine-readable geometry report while strictly preserving physical scale and coordinates.
+- **Prerequisites**: Phase 2 complete (or deterministic raw mesh fixtures available).
+- **Delivered**:
+  - `src/loom/mesh/models.py`: Typed data models and diagnostic reporting structures (`GeometryDiagnostics`, `ComponentInfo`, `ComponentActionResult`, `CleanupActionResult`, `RepairActionResult`, `MeshProcessingResult`, and `MeshProcessingStage` enum).
+  - `src/loom/mesh/diagnostics.py`: Comprehensive read-only geometry and topology analysis (vertex/face counts, bounding box, extents, volume, surface area, boundary loops, non-manifold edges, NaN/Inf detection, zero-area degenerate triangles, duplicate faces, unreferenced vertices, Euler characteristic, status categorization: `VALID`, `WARNING`, `ERROR`).
+  - `src/loom/mesh/components.py`: Disconnected component analyzer and configurable filtering strategies (`largest`, `largest_by_area`, `min_faces`, `relative_threshold`, `keep_all`) based on face-adjacency graph traversal.
+  - `src/loom/mesh/cleanup.py`: Deterministic invalid and degenerate geometry cleanup (NaN/Inf vertex purge, out-of-bounds face index removal, zero-area triangle purge via cross-product area, duplicate face removal, unreferenced vertex removal).
+  - `src/loom/mesh/repair.py`: Conservative hole and defect repair using directed boundary loop extraction, 2D-projected ear-clipping triangulation for eligible defects ($\le \text{max\_hole\_edges}$), honest preservation and logging of complex/ineligible defects, and BFS outward normal/winding unification.
+  - `src/loom/mesh/processor.py`: Orchestrator executing the 8-stage mesh processing pipeline with coordinate and physical scale preservation (reserving all scaling for Phase 4).
+  - `src/loom/pipeline/runner.py`: Standalone execution via `run_phase3_mesh_pipeline()` generating `outputs/runs/<run_id>/geometry/cleaned_<stem>.obj` and `reports/geometry.json`.
+  - `src/loom/__main__.py`: CLI geometry subcommand (`python -m loom geometry --input <mesh>`) and direct flag (`--mesh`), with structured terminal diagnostic summary.
+  - `tests/fixtures/mesh_fixtures.py`: Deterministic programmatic mesh fixtures (`clean_cube`, `disconnected_mesh`, `degenerate_mesh`, `hole_mesh`, `large_hole_mesh`, `duplicate_and_unreferenced_mesh`).
+  - `docs/geometry.md`: Comprehensive Phase 3 specification, boundary definitions, and format contracts.
+  - 40 unit and integration tests covering all Phase 3 modules (115 total tests passing repository-wide).
 - **Measurable Completion Criteria**:
-  - Raw mesh with disconnected floating fragments is cleaned to a single primary component.
-  - Unreferenced vertices and self-intersecting faces are eliminated or flagged.
+  - [x] Read-only diagnostics accurately computed before and after processing without geometry deformation.
+  - [x] Multi-component meshes filtered according to configurable strategy (`largest`, `min_faces`, etc.) with transparent removed component tracking.
+  - [x] Degenerate zero-area triangles, invalid face indices, and unreferenced vertices deterministically removed.
+  - [x] Eligible boundary holes ($\le \text{max\_hole\_edges}$) closed and watertightness restored; complex holes ($> \text{max\_hole\_edges}$) honestly preserved and reported.
+  - [x] Coordinate values and physical scale strictly preserved (no translation, no unit rescaling).
+  - [x] Machine-readable `reports/geometry.json` generated in standard run hierarchy.
+  - [x] CLI execution tested and verified (`python -m loom geometry --input ...`).
+  - [ ] Live end-to-end validation on real Meshroom-produced photogrammetric mesh (Awaiting host photogrammetry backend `ISSUE-BLK-002`).
+
 
 ---
 

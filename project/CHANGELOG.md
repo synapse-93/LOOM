@@ -4,7 +4,41 @@ This log records chronological development iterations. Every agent completing me
 
 ---
 
+## Iteration 005 — Phase 3: Raw Geometry & Mesh Processing Implementation & Fixture Validation
+- **Date**: 2026-10-01
+- **Milestone**: Phase 3 — Raw Geometry & Mesh Processing (IMPLEMENTED & FIXTURE-TESTED with 115 tests; Live Reconstruction: Awaiting Host Binary `ISSUE-BLK-002`)
+- **Changes Implemented**:
+  - Enforced strict Phase 3 architectural boundaries: zero Phase 4+ functionality added (no metric scaling, no ArUco markers, no absolute dimensions, no CAD ground-truth accuracy benchmarking, no printability analysis, no STL manufacturing export, no neural AI/PyTorch/Depth Anything dependencies). Reconstructed coordinates and physical scale strictly preserved.
+  - Installed authorized dependencies: `trimesh==5.1.0` and `scipy==1.15.3` (authorized under `.agents/rules/python.md`). Updated `pyproject.toml`.
+  - Implemented typed domain exceptions in `src/loom/mesh/exceptions.py`: `MeshError`, `MeshFormatError`, `MeshInvalidError`, `MeshLoadError`, `MeshProcessingError`.
+  - Extended configuration models in `src/loom/config/models.py`: added `component_strategy`, `min_component_faces`, `min_component_ratio`, `remove_degenerate_faces`, `remove_unreferenced_vertices`, `remove_duplicate_faces`, `unify_normals`, `max_hole_edges`, `fill_holes`.
+  - Implemented typed data models in `src/loom/mesh/models.py`: `GeometryDiagnostics`, `ComponentInfo`, `ComponentActionResult`, `CleanupActionResult`, `RepairActionResult`, `MeshProcessingResult`, and `MeshProcessingStage` enum.
+  - Implemented read-only diagnostics in `src/loom/mesh/diagnostics.py`: vertex/face counts, bounding box, extents, volume, surface area, component count, boundary edges, boundary loops, non-manifold edges/vertices, watertightness, Euler characteristic, NaN/Inf detection, zero-area degenerate triangles, duplicate faces, unreferenced vertices, and status categorization (`VALID`, `WARNING`, `ERROR`).
+  - Implemented connected component analysis in `src/loom/mesh/components.py`: `MeshComponentAnalyzer` supporting strategies (`largest`, `largest_by_area`, `min_faces`, `relative_threshold`, `keep_all`) based on face-adjacency graph traversal without external graph packages.
+  - Implemented deterministic cleanup in `src/loom/mesh/cleanup.py`: `MeshCleaner` removing NaN/Inf vertices, invalid face indices, zero-area degenerate triangles (cross-product area $\le 10^{-12}$), duplicate faces, and unreferenced vertices.
+  - Implemented conservative hole repair in `src/loom/mesh/repair.py`: `MeshRepairer` extracting directed boundary loops, classifying defects by size threshold (`max_hole_edges`), triangulating eligible loops via 2D ear-clipping, honestly preserving complex defects in `defect_details`, and unifiying outward normals via pure NumPy BFS without `networkx`.
+  - Implemented pipeline orchestrator in `src/loom/mesh/processor.py`: `MeshProcessor` managing the 8-stage pipeline while strictly preserving coordinate values and physical scale.
+  - Implemented standalone runner in `src/loom/pipeline/runner.py`: `run_phase3_mesh_pipeline()` generating `outputs/runs/<run_id>/geometry/cleaned_<stem>.obj` and `reports/geometry.json`.
+  - Integrated Phase 3 into CLI (`src/loom/__main__.py`): added `geometry` subcommand (`python -m loom geometry --input <mesh>`) and direct flag (`--mesh`), with structured terminal diagnostic summary.
+  - Authored comprehensive Phase 3 specification in `docs/geometry.md`.
+  - Constructed deterministic test fixtures in `tests/fixtures/mesh_fixtures.py` (`clean_cube`, `disconnected_mesh`, `degenerate_mesh`, `hole_mesh`, `large_hole_mesh`, `duplicate_and_unreferenced_mesh`).
+  - Added 40 new unit and integration tests across `tests/unit/mesh/` and `tests/integration/mesh_pipeline/`.
+- **Verification**:
+  - Full test suite passed: **115 passed in 7.20s** (100% pass rate, 40 new tests + 75 existing tests, zero regressions).
+  - Validated all 4 core fixture types through end-to-end pipeline:
+    - `clean_cube`: 8 vertices, 12 faces, 1 component, watertight True, SUCCESS.
+    - `disconnected`: 12 -> 8 vertices, 16 -> 12 faces, 2 -> 1 component, watertight True, SUCCESS.
+    - `degenerate`: 11 -> 8 vertices, 13 -> 12 faces, zero-area face and unreferenced vertices removed, watertight True, SUCCESS.
+    - `hole`: 8 -> 8 vertices, 11 -> 12 faces, boundary loop repaired, watertightness restored, SUCCESS.
+  - CLI smoke test verified: `python -m loom geometry --input outputs/experiments/phase3_validation/hole.obj` completed with exit code 0, generated valid intermediate mesh and `reports/geometry.json`.
+- **Next Step**:
+  - Unblock host photogrammetry backend (`ISSUE-BLK-002`) to run live smartphone video through Phase 1 -> Phase 2 -> Phase 3 end-to-end.
+  - Begin Phase 4 (Fiducial Metric Scaling & Coordinate Transformation).
+
+---
+
 ## Iteration 004 — Phase 2: Architecture, Contracts, Failure Classification & Pipeline Integration
+
 - **Date**: 2026-09-26
 - **Milestone**: Phase 2 — Multi-View 3D Reconstruction Integration (Architecture & Adapter: IMPLEMENTED & VERIFIED with 75 tests; Live execution: BLOCKED pending host binary)
 - **Changes Implemented**:

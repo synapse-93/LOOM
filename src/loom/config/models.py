@@ -62,9 +62,19 @@ class MeshConfig:
 
     clean_outliers: bool = True
     close_holes: bool = True
+    fill_holes: bool = True
     max_hole_size: int = 30
+    max_hole_edges: int = 30
     poisson_depth: int = 8
     target_face_count: Optional[int] = 50000
+    component_strategy: str = "largest"  # Options: 'largest', 'largest_by_area', 'min_faces', 'relative_threshold', 'keep_all'
+    min_component_faces: int = 100
+    min_component_ratio: float = 0.05
+    remove_degenerate_faces: bool = True
+    remove_unreferenced_vertices: bool = True
+    remove_duplicate_faces: bool = True
+    unify_normals: bool = True
+
 
 
 @dataclass
