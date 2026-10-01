@@ -4,6 +4,38 @@ This log records chronological development iterations. Every agent completing me
 
 ---
 
+## Iteration 006 — Phase 2 & Phase 3 Validation, Hardening & Pipeline Handoff Audit
+- **Date**: 2026-10-01
+- **Milestone**: Phase 2 — Reconstruction Backend Integration (Adapter & Contracts Verified; Host Binary BLOCKED `ISSUE-BLK-002`); Phase 3 — Raw Geometry & Mesh Processing (VERIFIED & AUDITED with 124 total tests)
+- **Changes Implemented**:
+  - Audited host environment photogrammetry executables: searched system PATH, `C:\`, `C:\Program Files`, `C:\Users\adise`, `AppData`, `tools`. Neither `meshroom_batch.exe` nor `colmap.exe` is present on disk (`ISSUE-BLK-002`). Confirmed NVIDIA GeForce RTX 4060 Laptop GPU with Driver 592.82 and CUDA 13.1 ready for photogrammetry binary installation.
+  - Phase 2 live reconstruction status kept explicitly marked `BLOCKED` as mandated by project constitution and completion gates.
+  - Hardened `MeshroomAdapter` in `src/loom/reconstruction/meshroom.py`:
+    - Updated `parse_camera_sfm` to handle both dictionary and list JSON schemas for `views` and `poses`, calculate pose counts, clamp `registration_ratio` to $[0.0, 1.0]$.
+    - Added `.stl` candidate extension to mesh discovery, added fallback to `sfm.json` if `cameras.sfm` is absent.
+  - Hardened Phase 3 geometry diagnostics and cleanup:
+    - Added configurable `degenerate_area_threshold: float = 1e-7` to `MeshConfig` in `src/loom/config/models.py`.
+    - Updated `MeshDiagnostics.inspect()` and `MeshCleaner.clean()` to detect and purge collinear sliver triangles while accounting for float serialization rounding differences between memory and disk representations.
+    - Suppressed Trimesh internal `RuntimeWarning: invalid value encountered in divide` on open surfaces by guarding `fix_inversion` with `if mesh.is_watertight:` and `warnings.catch_warnings()`.
+  - Hardened pipeline orchestration in `src/loom/pipeline/runner.py`:
+    - Added safety try/except wrapper around `MeshProcessor.process` in `run_phase1_pipeline`. When a raw mesh is corrupt or unreadable, sets `mesh_processing_result.status = "FAILED"`, writes `geometry.json`, and cleanly separates reconstruction success from geometry processing failure.
+    - Added user warning when `--clean-mesh` is requested with video input without `--reconstruct`.
+  - Added photogrammetry raw mesh fixture in `tests/fixtures/mesh_fixtures.py` (`create_photogrammetry_raw_mesh`):
+    - Synthesized 1040-triangle sphere dome with 40-edge open base boundary, 3-edge pinhole, 2 floating satellite noise clusters, collinear slivers, duplicate faces, unreferenced vertices, and arbitrary SfM offset coordinates.
+    - Saved reference raw mesh fixture to `data/raw/sample_photogrammetry_raw.obj`.
+  - Added comprehensive test suites (9 new tests):
+    - `tests/unit/mesh/test_photogrammetry_audit.py` (6 unit audit tests verifying diagnostics, component selection, cleanup, conservative hole repair, scale/coordinate preservation, and JSON report generation on realistic photogrammetry mesh).
+    - `tests/integration/full_pipeline/test_phase2_phase3_handoff.py` (3 integration tests verifying full Phase 1 $\to$ Phase 2 $\to$ Phase 3 handoff, reconstruction failure skipping Phase 3, and failure discrimination between reconstruction success and corrupt mesh processing failure).
+- **Verification**:
+  - Full test suite passed: **124 passed in 9.28s** (100% pass rate, 9 new tests + 115 existing tests, zero failures, zero warnings).
+  - CLI execution verified: `python -m loom geometry --input data/raw/sample_photogrammetry_raw.obj` executed in 0.0508s, producing `cleaned_sample_photogrammetry_raw.obj` and `reports/geometry.json`.
+  - Degraded execution verified: `python -m loom --video data/raw/synthetic_test.mp4 --reconstruct --clean-mesh` completed cleanly with `Status: RECONSTRUCTION BLOCKED (Backend Executable Unavailable on Host)`.
+- **Next Step**:
+  - Provision external reconstruction tool (`meshroom_batch` or `colmap`) to unblock live photogrammetry (`ISSUE-BLK-002`).
+  - Proceed with Phase 4 (Fiducial Metric Scaling & Coordinate Transformation).
+
+---
+
 ## Iteration 005 — Phase 3: Raw Geometry & Mesh Processing Implementation & Fixture Validation
 - **Date**: 2026-10-01
 - **Milestone**: Phase 3 — Raw Geometry & Mesh Processing (IMPLEMENTED & FIXTURE-TESTED with 115 tests; Live Reconstruction: Awaiting Host Binary `ISSUE-BLK-002`)

@@ -185,3 +185,93 @@ def save_fixture_mesh(mesh: trimesh.Trimesh, path: Path, file_type: str = "obj")
     path.parent.mkdir(parents=True, exist_ok=True)
     mesh.export(str(path), file_type=file_type)
     return path
+
+
+def create_photogrammetry_raw_mesh(
+    radius: float = 10.0,
+    offset: tuple[float, float, float] = (105.4, 42.1, -210.8),
+) -> trimesh.Trimesh:
+    """Create a realistic photogrammetry raw reconstructed surface mesh.
+
+    Models key artifacts typical of real-world Meshroom/AliceVision reconstructions:
+    - Dominant multi-faceted body (icosphere surface, >1000 faces)
+    - Open unobserved base resting surface (>30 boundary edges, unobserved by camera)
+    - Small eligible surface pinhole/defect (3 boundary edges)
+    - Floating disconnected photogrammetry background noise/dust components (2 clusters)
+    - Collinear zero-area degenerate sliver triangles (from Marching Cubes/Delaunay)
+    - Duplicate identical face
+    - Floating unreferenced vertices
+    - Non-origin arbitrary real-world SfM coordinate space
+    """
+    base = trimesh.creation.icosphere(subdivisions=3, radius=radius)
+    centers = base.triangles_center
+
+    # 1. Open ground boundary: remove bottom faces (z < -0.7 * radius)
+    keep_mask = centers[:, 2] >= (-0.7 * radius)
+    faces = base.faces[keep_mask].copy()
+
+    # 2. Small surface defect: remove 1 face near equator
+    mid_candidates = np.where(np.abs(centers[keep_mask, 2]) < 1.0)[0]
+    mid_idx = mid_candidates[0] if len(mid_candidates) > 0 else 0
+    faces = np.delete(faces, mid_idx, axis=0)
+
+    vertices = base.vertices.copy()
+
+    # 3. Add zero-area degenerate triangle sharing an edge of face 0
+    v0 = vertices[faces[0, 0]]
+    v1 = vertices[faces[0, 1]]
+    v_mid = (v0 + v1) / 2.0
+    v_mid_idx = len(vertices)
+    vertices = np.vstack([vertices, [v_mid]])
+    collinear_face = np.array([[faces[0, 0], faces[0, 1], v_mid_idx]], dtype=np.int64)
+    faces = np.vstack([faces, collinear_face])
+
+    # 4. Duplicate face
+    faces = np.vstack([faces, faces[0:1]])
+
+    # 5. Add two small disconnected satellite noise clusters ("dust")
+    # Cluster 1: 4-face tetrahedron
+    v_sat1 = np.array([
+        [20.0, 20.0, 0.0],
+        [22.0, 20.0, 0.0],
+        [20.0, 22.0, 0.0],
+        [20.0, 20.0, 2.0],
+    ], dtype=np.float64)
+    f_sat1 = np.array([
+        [0, 1, 2],
+        [0, 1, 3],
+        [1, 2, 3],
+        [2, 0, 3],
+    ], dtype=np.int64) + len(vertices)
+    vertices = np.vstack([vertices, v_sat1])
+    faces = np.vstack([faces, f_sat1])
+
+    # Cluster 2: 4-face tetrahedron
+    v_sat2 = np.array([
+        [-20.0, -20.0, 0.0],
+        [-18.0, -20.0, 0.0],
+        [-20.0, -18.0, 0.0],
+        [-20.0, -20.0, 2.0],
+    ], dtype=np.float64)
+    f_sat2 = np.array([
+        [0, 1, 2],
+        [0, 1, 3],
+        [1, 2, 3],
+        [2, 0, 3],
+    ], dtype=np.int64) + len(vertices)
+    vertices = np.vstack([vertices, v_sat2])
+    faces = np.vstack([faces, f_sat2])
+
+    # 6. Floating unreferenced vertices
+    v_unref = np.array([
+        [50.0, 50.0, 50.0],
+        [51.0, 51.0, 51.0],
+        [52.0, 52.0, 52.0],
+    ], dtype=np.float64)
+    vertices = np.vstack([vertices, v_unref])
+
+    # 7. Apply coordinate offset to place in realistic SfM world coordinate system
+    vertices += np.array(offset, dtype=np.float64)
+
+    return trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+

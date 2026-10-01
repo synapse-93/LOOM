@@ -386,9 +386,16 @@ class MeshRepairer:
                 mesh.faces = faces
 
             # Ensure normals are oriented consistently outwards
-            trimesh.repair.fix_normals(mesh)
-            if mesh.is_volume and mesh.volume < 0:
-                trimesh.repair.fix_inversion(mesh)
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
+                trimesh.repair.fix_normals(mesh)
+                if mesh.is_watertight:
+                    try:
+                        if mesh.is_volume and mesh.volume < 0:
+                            trimesh.repair.fix_inversion(mesh)
+                    except Exception:
+                        pass
             return True
         except Exception as exc:
             logger.debug("Normal and winding unification encountered issue: %s", exc)

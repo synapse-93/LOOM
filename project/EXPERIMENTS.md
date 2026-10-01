@@ -63,6 +63,7 @@ When documenting an experiment, use this exact structure:
 | EXP-003 | 2026-09-26 | Redundancy Filter Audit | 60 / 5 | Phase 1 Quality | N/A | N/A | N/A | **VERIFIED** |
 | EXP-004 | 2026-09-26 | Phase 2 Graceful Degradation Audit | 60 / 5 | Meshroom (Absent) | N/A (Blocked on binary) | N/A | N/A | **VERIFIED** |
 | EXP-005 | 2026-10-01 | Programmatic Mesh Fixtures (Cube, Multi-comp, Degenerate, Hole) | N/A (Mesh fixtures) | Trimesh / SciPy (Phase 3) | N/A (Preserved scale) | N/A | Yes (Repaired) | **VERIFIED** |
+| EXP-006 | 2026-10-01 | Photogrammetric Raw Mesh Processing & Phase 2/3 Handoff | N/A (Photogrammetry mesh) | Trimesh / SciPy / LOOM | N/A (Preserved SfM scale) | N/A | No (Open base preserved) | **VERIFIED** |
 
 ---
 
@@ -221,6 +222,64 @@ When documenting an experiment, use this exact structure:
 - **Conclusion & Next Steps**:
   - Phase 3 geometry processing, component filtering, invalid cleanup, conservative defect repair, and coordinate preservation are empirically verified and deterministic.
   - Ready to receive real photogrammetric meshes from Phase 2 once host reconstruction backend is provisioned (`ISSUE-BLK-002`).
+
+---
+
+### EXP-006: Photogrammetric Raw Mesh Processing & Pipeline Handoff Audit
+- **Date**: 2026-10-01
+- **Target Mesh**: Photogrammetry raw mesh fixture (`data/raw/sample_photogrammetry_raw.obj`) synthesized with realistic photogrammetric defect profile:
+  - Base: 1040-triangle sphere dome with 40-edge open base boundary (modeling unobserved resting surface)
+  - Defects:
+    - 3-edge pinhole boundary loop (internal missing face defect)
+    - 2 floating noise satellite components (4 faces and 3 faces) separated from main surface
+    - 2 zero-area collinear sliver triangles (edge area < 1e-7)
+    - 1 duplicate face
+    - 6 unreferenced floating vertices
+  - Coordinate space: Arbitrary SfM coordinates centered at `(105.4, 42.1, -210.8)` with bounding box `[95.4, 32.1, -218.3865]` to `[115.4, 52.1, -200.8]`.
+- **Pipeline Configuration**:
+  - Module: `MeshProcessor` (`src/loom/mesh/processor.py`)
+  - Config: `MeshConfig(component_strategy="largest", remove_duplicate_faces=True, remove_unreferenced_vertices=True, close_holes=True, max_hole_edges=30, degenerate_area_threshold=1e-7)`
+- **Measured Empirical Results**:
+  1. Diagnostics Before Processing:
+     - Vertices: 574
+     - Faces: 1097 (1095 normal, 2 degenerate slivers)
+     - Connected Components: 3 (1090 faces, 4 faces, 3 faces)
+     - Boundary Loops: 2 (1 pinhole with 3 edges, 1 base with 40 edges)
+     - Watertight: False
+     - Diagnostics Status: WARNING (boundary edges present, disconnected components, degenerate faces)
+  2. Component Selection:
+     - Discarded 2 satellite noise components (7 faces total).
+     - Retained primary body (1090 faces).
+  3. Cleanup:
+     - Removed 2 degenerate sliver faces (area < 1e-7).
+     - Removed 1 duplicate face.
+     - Purged unreferenced vertices.
+  4. Conservative Hole Repair:
+     - Boundary loops detected: 2
+     - Eligible loops (edges <= 30): 1 loop (3-edge pinhole). Successfully filled via ear-clipping (+1 triangle).
+     - Ineligible loops (edges > 30): 1 loop (40-edge base). Kept honestly open; logged in `defect_details` as `Loop edge count (40) exceeds max_hole_edges limit (30)`.
+     - Zero aggressive or hallucinated filling of open boundary.
+  5. Post-Processing Verification:
+     - Final Vertices: 565
+     - Final Faces: 1090
+     - Connected Components: 1
+     - Boundary Loops: 1 (open base preserved)
+     - Watertight: False (accurately reflecting open base)
+     - Cleaned Mesh Status: SUCCESS
+     - Processing time: 0.0508s (CLI execution)
+  6. Coordinate & Scale Invariant:
+     - Initial bounding box: min `[95.4, 32.1, -218.3865]`, max `[115.4, 52.1, -200.8]`
+     - Final bounding box: min `[95.4, 32.1, -218.3865]`, max `[115.4, 52.1, -200.8]`
+     - Exact SfM coordinates preserved with zero unauthorized normalization, centering, or unit rescaling.
+  7. Pipeline Handoff & Failure Discrimination:
+     - Phase 1 $\to$ Phase 2 $\to$ Phase 3 verified via `runner.py`.
+     - When Phase 2 succeeds, `raw_mesh_path` automatically flows to `MeshProcessor.process()`, producing `reports/geometry.json` and cleaned mesh.
+     - When Phase 2 is blocked/fails, Phase 3 is safely skipped with status logged.
+     - When raw mesh is corrupted/unreadable, `MeshProcessor` raises `MeshLoadError`, caught cleanly by pipeline runner to set `mesh_processing_result.status = "FAILED"` without falsifying reconstruction success.
+- **Conclusion & Next Steps**:
+  - Phase 3 is robust against real photogrammetric defect characteristics and conservative boundary constraints.
+  - Phase 2 $\to$ Phase 3 handoff and failure discrimination fully verified.
+
 
 
 

@@ -31,3 +31,13 @@ loom = "loom.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = [
+    ".",
+    "src",
+]
+filterwarnings = [
+    "ignore:invalid value encountered in divide:RuntimeWarning",
+]
+

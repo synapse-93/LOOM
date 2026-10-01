@@ -363,7 +363,12 @@ def run_phase1_pipeline(
         mesh_processing_result: Optional[MeshProcessingResult] = None
         geometry_report_path: Optional[Path] = None
 
-        if (
+        if clean_mesh and not reconstruct:
+            logger.warning(
+                "Flag '--clean-mesh' was requested with video ingest, but '--reconstruct' was not enabled. "
+                "Enable '--reconstruct' to produce a 3D mesh from video keyframes."
+            )
+        elif (
             clean_mesh
             and reconstruction_result is not None
             and reconstruction_result.success
@@ -374,11 +379,22 @@ def run_phase1_pipeline(
             geometry_dir = ensure_directory(base_run_dir / "geometry")
             cleaned_mesh_path = geometry_dir / f"cleaned_{reconstruction_result.mesh_path.stem}.obj"
             processor = MeshProcessor(config.mesh)
-            mesh_processing_result = processor.process(
-                input_mesh_path=reconstruction_result.mesh_path,
-                output_mesh_path=cleaned_mesh_path,
-                config=config.mesh,
-            )
+            try:
+                mesh_processing_result = processor.process(
+                    input_mesh_path=reconstruction_result.mesh_path,
+                    output_mesh_path=cleaned_mesh_path,
+                    config=config.mesh,
+                )
+            except Exception as e:
+                logger.error("Phase 3 mesh processing failed on '%s': %s", reconstruction_result.mesh_path, e)
+                mesh_processing_result = MeshProcessingResult(
+                    input_mesh_path=reconstruction_result.mesh_path,
+                    output_mesh_path=None,
+                    success=False,
+                    status="FAILED",
+                    error_message=f"Phase 3 mesh processing failed: {e}",
+                    execution_time_seconds=0.0,
+                )
             geometry_report_path = reports_dir / "geometry.json"
             with open(geometry_report_path, "w", encoding="utf-8") as gf:
                 json.dump(mesh_processing_result.to_dict(), gf, indent=2)

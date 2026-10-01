@@ -93,9 +93,12 @@ Phase 10 <── Phase 9 <── Phase 8 <── Phase 7 <── Phase 6 <──
   - `src/loom/mesh/processor.py`: Orchestrator executing the 8-stage mesh processing pipeline with coordinate and physical scale preservation (reserving all scaling for Phase 4).
   - `src/loom/pipeline/runner.py`: Standalone execution via `run_phase3_mesh_pipeline()` generating `outputs/runs/<run_id>/geometry/cleaned_<stem>.obj` and `reports/geometry.json`.
   - `src/loom/__main__.py`: CLI geometry subcommand (`python -m loom geometry --input <mesh>`) and direct flag (`--mesh`), with structured terminal diagnostic summary.
-  - `tests/fixtures/mesh_fixtures.py`: Deterministic programmatic mesh fixtures (`clean_cube`, `disconnected_mesh`, `degenerate_mesh`, `hole_mesh`, `large_hole_mesh`, `duplicate_and_unreferenced_mesh`).
+  - `tests/fixtures/mesh_fixtures.py`: Deterministic programmatic mesh fixtures (`clean_cube`, `disconnected_mesh`, `degenerate_mesh`, `hole_mesh`, `large_hole_mesh`, `duplicate_and_unreferenced_mesh`, `create_photogrammetry_raw_mesh`).
+  - `data/raw/sample_photogrammetry_raw.obj`: Reference photogrammetric raw mesh with realistic defect profile (open base, pinhole, satellite noise clusters, collinear slivers, duplicate faces, unreferenced vertices).
+  - `tests/unit/mesh/test_photogrammetry_audit.py`: 6 photogrammetry audit tests verifying diagnostics, component selection, cleanup, conservative hole repair, scale/coordinate preservation, and JSON report generation.
+  - `tests/integration/full_pipeline/test_phase2_phase3_handoff.py`: 3 end-to-end integration tests verifying full Phase 1 $\to$ 2 $\to$ 3 handoff, graceful skip on reconstruction failure, and clean failure discrimination on corrupt meshes.
   - `docs/geometry.md`: Comprehensive Phase 3 specification, boundary definitions, and format contracts.
-  - 40 unit and integration tests covering all Phase 3 modules (115 total tests passing repository-wide).
+  - 49 unit and integration tests covering all Phase 3 modules and handoffs (124 total tests passing repository-wide).
 - **Measurable Completion Criteria**:
   - [x] Read-only diagnostics accurately computed before and after processing without geometry deformation.
   - [x] Multi-component meshes filtered according to configurable strategy (`largest`, `min_faces`, etc.) with transparent removed component tracking.
@@ -104,7 +107,9 @@ Phase 10 <── Phase 9 <── Phase 8 <── Phase 7 <── Phase 6 <──
   - [x] Coordinate values and physical scale strictly preserved (no translation, no unit rescaling).
   - [x] Machine-readable `reports/geometry.json` generated in standard run hierarchy.
   - [x] CLI execution tested and verified (`python -m loom geometry --input ...`).
-  - [ ] Live end-to-end validation on real Meshroom-produced photogrammetric mesh (Awaiting host photogrammetry backend `ISSUE-BLK-002`).
+  - [x] Realistic photogrammetric defect profile audited and verified without destructive geometry loss.
+  - [x] Phase 2 $\to$ Phase 3 automated pipeline handoff and failure discrimination verified.
+  - [ ] Live end-to-end validation on live Meshroom-produced photogrammetric mesh (Awaiting host photogrammetry backend `ISSUE-BLK-002`).
 
 
 ---

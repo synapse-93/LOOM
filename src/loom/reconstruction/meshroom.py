@@ -196,13 +196,24 @@ class MeshroomAdapter(ReconstructionEngine):
             views = data.get("views", [])
             poses = data.get("poses", [])
 
-            view_count = len(views)
-            pose_count = len(poses)
+            if isinstance(views, dict):
+                view_count = len(views)
+            elif isinstance(views, list):
+                view_count = len(views)
+            else:
+                view_count = 0
+
+            if isinstance(poses, dict):
+                pose_count = len(poses)
+            elif isinstance(poses, list):
+                pose_count = len(poses)
+            else:
+                pose_count = 0
 
             if view_count > 0:
-                ratio = round(pose_count / view_count, 3)
+                ratio = round(min(1.0, pose_count / view_count), 3)
                 return pose_count, ratio
-            return pose_count, None
+            return (pose_count, None) if pose_count > 0 else (None, None)
         except Exception as e:
             logger.warning("Failed to parse camera registration from %s: %s", sfm_path, e)
             return None, None
@@ -254,7 +265,7 @@ class MeshroomAdapter(ReconstructionEngine):
             candidate_meshes: list[Path] = []
             for sdir in search_dirs:
                 if sdir.is_dir():
-                    for ext in ("*.obj", "*.ply"):
+                    for ext in ("*.obj", "*.ply", "*.stl"):
                         for f in sdir.rglob(ext):
                             if (
                                 f.is_file()
@@ -351,9 +362,12 @@ class MeshroomAdapter(ReconstructionEngine):
         if camera_poses_path is None:
             for sdir in search_dirs:
                 if sdir.is_dir():
-                    for f in sdir.rglob("cameras.sfm"):
-                        if f.is_file() and f.stat().st_size > 0:
-                            camera_poses_path = f.resolve()
+                    for name in ("cameras.sfm", "sfm.json"):
+                        for f in sdir.rglob(name):
+                            if f.is_file() and f.stat().st_size > 0:
+                                camera_poses_path = f.resolve()
+                                break
+                        if camera_poses_path:
                             break
                 if camera_poses_path:
                     break

@@ -99,7 +99,8 @@ class MeshCleaner:
             v2 = vertices[faces[:, 2]]
             cross = np.cross(v1 - v0, v2 - v0)
             areas = 0.5 * np.linalg.norm(cross, axis=1)
-            degenerate_mask = np.isnan(areas) | (areas <= 1e-12)
+            thresh = getattr(config, "degenerate_area_threshold", 1e-7)
+            degenerate_mask = np.isnan(areas) | (areas <= thresh)
             degen_count = int(np.sum(degenerate_mask))
             if degen_count > 0:
                 logger.info("Removing %d degenerate (zero-area) faces.", degen_count)

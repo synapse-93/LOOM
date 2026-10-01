@@ -74,6 +74,7 @@ class MeshConfig:
     remove_unreferenced_vertices: bool = True
     remove_duplicate_faces: bool = True
     unify_normals: bool = True
+    degenerate_area_threshold: float = 1e-7
 
 
 

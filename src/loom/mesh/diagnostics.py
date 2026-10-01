@@ -21,7 +21,7 @@ class MeshDiagnostics:
     """Read-only inspector for surface geometry, topology, and validity."""
 
     @classmethod
-    def inspect(cls, mesh: trimesh.Trimesh) -> GeometryDiagnostics:
+    def inspect(cls, mesh: trimesh.Trimesh, degenerate_area_threshold: float = 1e-7) -> GeometryDiagnostics:
         """Perform comprehensive read-only geometric and topological inspection of a mesh."""
         warnings: list[str] = []
         errors: list[str] = []
@@ -91,7 +91,7 @@ class MeshDiagnostics:
                 v2 = vertices[faces[:, 2]]
                 cross = np.cross(v1 - v0, v2 - v0)
                 areas = 0.5 * np.linalg.norm(cross, axis=1)
-                degenerate_face_count = int(np.sum(np.isnan(areas) | (areas <= 1e-12)))
+                degenerate_face_count = int(np.sum(np.isnan(areas) | (areas <= degenerate_area_threshold)))
                 if degenerate_face_count > 0:
                     warnings.append(f"Detected {degenerate_face_count} degenerate (zero-area) faces.")
             except Exception as e:

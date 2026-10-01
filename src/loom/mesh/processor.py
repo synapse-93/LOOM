@@ -106,7 +106,8 @@ class MeshProcessor:
             stages_completed.append(MeshProcessingStage.VALIDATE_INPUT.value)
 
             # Stage 2: Initial Diagnostics
-            diagnostics_before = MeshDiagnostics.inspect(mesh)
+            degen_thresh = getattr(active_cfg, "degenerate_area_threshold", 1e-7)
+            diagnostics_before = MeshDiagnostics.inspect(mesh, degenerate_area_threshold=degen_thresh)
             warnings.extend(diagnostics_before.warnings)
             logger.info(
                 "Initial diagnostics: %d vertices, %d faces, %d components, %d boundary edges, status=%s",
@@ -135,7 +136,7 @@ class MeshProcessor:
             stages_completed.append(MeshProcessingStage.NORMALIZE.value)
 
             # Stage 7: Post-Processing Diagnostics
-            diagnostics_after = MeshDiagnostics.inspect(mesh)
+            diagnostics_after = MeshDiagnostics.inspect(mesh, degenerate_area_threshold=degen_thresh)
             stages_completed.append(MeshProcessingStage.DIAGNOSTICS_AFTER.value)
 
             # Collect any remaining warnings
