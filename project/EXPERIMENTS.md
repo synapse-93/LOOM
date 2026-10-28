@@ -65,8 +65,9 @@ When documenting an experiment, use this exact structure:
 | EXP-005 | 2026-10-01 | Programmatic Mesh Fixtures (Cube, Multi-comp, Degenerate, Hole) | N/A (Mesh fixtures) | Trimesh / SciPy (Phase 3) | N/A (Preserved scale) | N/A | Yes (Repaired) | **VERIFIED** |
 | EXP-006 | 2026-10-01 | Photogrammetric Raw Mesh Processing & Phase 2/3 Handoff | N/A (Photogrammetry mesh) | Trimesh / SciPy / LOOM | N/A (Preserved SfM scale) | N/A | No (Open base preserved) | **VERIFIED** |
 | EXP-007 | 2026-10-01 | Phase 4 Synthetic Metric Scaling & Topology Audit | N/A (Synthetic box & mesh) | OpenCV / Trimesh / LOOM | 0.000 mm (Synthetic exact) | 0.000% | Preserved | **VERIFIED (Synthetic)** |
-| EXP-008 | 2026-10-28 | Smartphone Video (WhatsApp Capture) | 300 / 158 | COLMAP 4.2.1 (CPU) | N/A (Arbitrary SfM scale) | N/A | Yes (Repaired) | **VERIFIED** |
-| EXP-009 | 2026-10-28 | Smartphone Video (Motion Blur WIN_20261028) | 300 / 0 | Guard (Skipped) | N/A (0 selected) | N/A | N/A | **VERIFIED** |
+| EXP-008 | 2026-10-28 | Capture Quality & Texture Heuristic | N/A (Unit test suite) | Quality Assessor | N/A | N/A | N/A | **VERIFIED (Software)** |
+| EXP-009 | 2026-10-28 | Smartphone Video (WhatsApp Capture) | 300 / 158 | COLMAP 4.2.1 (CPU) | N/A (Arbitrary SfM scale) | N/A | Yes (Repaired) | **VERIFIED** |
+| EXP-010 | 2026-10-28 | Smartphone Video (Motion Blur WIN_20261028) | 300 / 0 | Guard (Skipped) | N/A (0 selected) | N/A | N/A | **VERIFIED** |
 
 
 ---
@@ -355,7 +356,7 @@ When documenting an experiment, use this exact structure:
 
 ---
 
-### EXP-008: Live Smartphone COLMAP CPU Reconstruction & Phase 3 Mesh Cleanup Pipeline
+### EXP-009: Live Smartphone COLMAP CPU Reconstruction & Phase 3 Mesh Cleanup Pipeline
 - **Date**: 2026-10-28
 - **Target Object**: Physical captured object from handheld smartphone video (WhatsApp Video 2026-10-28 at 20.16.26.mp4).
 - **Capture Conditions**:
@@ -390,7 +391,7 @@ When documenting an experiment, use this exact structure:
 
 ---
 
-### EXP-009: Empty-Input Reconstruction Pre-flight Guard on Motion-Blurred Smartphone Footage
+### EXP-010: Empty-Input Reconstruction Pre-flight Guard on Motion-Blurred Smartphone Footage
 - **Date**: 2026-10-28
 - **Target Object**: Smartphone video with excessive motion blur / defocus (WIN_20261028_20_24_03_Pro.mp4).
 - **Capture Conditions**:

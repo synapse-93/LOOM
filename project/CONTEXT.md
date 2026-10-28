@@ -3,8 +3,8 @@
 **Project**: LOOM / VIDEO2PRINT  
 **Objective**: Transition an ordinary smartphone video into a metrically scaled, validated, 3D printable object (.STL) with measurable manufacturing readiness.  
 **Last Updated**: 2026-10-28  
-**Current Iteration**: 009 (COLMAP Windows CPU Reconstruction Pipeline, Qt Plugin Resolution & Live End-to-End Verification)  
-**Current Milestone**: Phase 2 — Photogrammetry Reconstruction (VERIFIED on Windows Host via COLMAP 4.2.1); Phase 3 (VERIFIED); Phase 4 (IMPLEMENTED & SYNTHETICALLY VERIFIED with 179 total tests)  
+**Current Iteration**: 010 (Integrated COLMAP CPU Photogrammetry, Capture Texture Guidance, Mesh Printability & STL Export)  
+**Current Milestone**: Phase 2 — Photogrammetry Reconstruction (VERIFIED on Windows Host via COLMAP 4.2.1); Phase 3 (VERIFIED); Phase 4 (IMPLEMENTED & SYNTHETICALLY VERIFIED); Phase 6 Printability (VERIFIED); Phase 7 STL Export (VERIFIED) with 191 total tests  
 
 ---
 
@@ -12,9 +12,9 @@
 
 | Dimension | Status | Notes |
 | :--- | :--- | :--- |
-| **Codebase State** | Phase 1 Complete, Phase 2 Verified (COLMAP), Phase 3 Verified, Phase 4 Implemented | Ingest, quality selection, COLMAP & Meshroom adapters, diagnostics, components, cleanup, repair, normalization, Phase 1 $\to$ 2 $\to$ 3 handoff, ArUco detection, measurement engine, scale estimator, transformer, scaling processor, and CLI working (179 passing tests). |
+| **Codebase State** | Phase 1, 2 (COLMAP), 3, 4, 6 (Printability), 7 (STL Export) Integrated & Verified | Ingest, quality selection, COLMAP & Meshroom adapters, diagnostics, components, cleanup, repair, normalization, Phase 1 $\to$ 2 $\to$ 3 handoff, ArUco detection, measurement engine, scale estimator, transformer, scaling processor, and CLI working (191 passing tests). |
 | **Python Target** | 3.10.11 | Installed and active in `.venv` (`.venv\Scripts\python`). |
-| **Dependencies** | Phase 1, 2, 3 & 4 Active | `numpy==2.2.6`, `opencv-python==5.0.0.93` (`cv2.aruco`), `pyyaml==6.0.3`, `tqdm==4.70.1`, `trimesh==5.1.0`, `scipy==1.15.3`, `pytest==9.1.1`. Zero new third-party dependencies. Zero heavyweight AI dependencies. |
+| **Dependencies** | Phase 1, 2, 3 & 4 Active | `numpy==2.2.6`, `opencv-python==5.0.0.93` (`cv2.aruco`), `pyyaml==6.0.3`, `tqdm==4.70.1`, `trimesh==5.1.0`, `scipy==1.15.3`, `pytest==9.1.1`. rtree==1.4.1 (mesh raycasting for wall thickness). Zero heavyweight AI dependencies. |
 | **Verified Components** | Ingest, Quality, COLMAP Adapter (CPU/Qt/Delaunay), Mesh Diagnostics, Cleanup, Repair, Normalization, Pipeline Handoff, ArUco Detection, Measurement Engine, Scale Estimator, Transformer, Scaling Processor, Zero-Frame Guard | 179 passing tests verifying photogrammetric mesh processing, component selection, degenerate removal, conservative hole repair, scale calculation, topology-preserving vertex transformation, failure discrimination, and CLI execution (`scale`, `geometry`, `reconstruct`). |
 | **Active Blockers** | None | COLMAP 4.2.1 is installed at `C:\Tools\COLMAP` and verified functional for live photogrammetry on host Windows environment (`EXP-008`). |
 

@@ -84,4 +84,4 @@ This document tracks active blockers, known limitations, technical debt, researc
 - **ISSUE-RES-002: Host Photogrammetry Reconstruction Backend Operational**
   - **Resolved**: 2026-10-28 (Iteration 009)
   - **Description**: Development host previously lacked an operational photogrammetry backend, blocking live 3D reconstruction on real footage (ISSUE-BLK-002).
-  - **Resolution**: COLMAP 4.2.1 configured and hardened at C:\Tools\COLMAP. Resolved Windows Qt platform plugin path requirement (QT_QPA_PLATFORM_PLUGIN_PATH), implemented CPU feature extraction/matching flags, SQLite match validation, and CGAL Delaunay meshing. Verified live end-to-end execution on smartphone video (EXP-008).
+  - **Resolution**: COLMAP 4.2.1 configured and hardened at C:\Tools\COLMAP. Resolved Windows Qt platform plugin path requirement (QT_QPA_PLATFORM_PLUGIN_PATH), implemented CPU feature extraction/matching flags, SQLite match validation, and CGAL Delaunay meshing. Verified live end-to-end execution on smartphone video (EXP-009).
