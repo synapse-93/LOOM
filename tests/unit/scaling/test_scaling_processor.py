@@ -134,3 +134,31 @@ def test_scaling_processor_invalid_marker_size(tmp_path: Path) -> None:
             reference_measurements=25.0,
             raise_on_error=True,
         )
+def test_scaling_processor_with_3d_marker_corners(tmp_path: Path) -> None:
+    """Verify scaling using four reconstructed 3D marker corners."""
+    cube = create_clean_cube()
+    in_mesh = tmp_path / "cube.obj"
+    cube.export(str(in_mesh))
+    out_mesh = tmp_path / "scaled_cube.obj"
+
+    processor = ScalingProcessor(
+        config=ScalingConfig(marker_size_mm=50.0)
+    )
+
+    corners_3d = [
+        (0.0, 0.0, 0.0),
+        (25.0, 0.0, 0.0),
+        (25.0, 25.0, 0.0),
+        (0.0, 25.0, 0.0),
+    ]
+
+    result = processor.process(
+        input_mesh_path=in_mesh,
+        output_mesh_path=out_mesh,
+        reference_measurements=corners_3d,
+    )
+
+    assert result.status == "SUCCESS"
+    assert result.scale_factor == pytest.approx(2.0)
+    assert result.measurement["measurement_count"] == 4
+    assert out_mesh.is_file()
