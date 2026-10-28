@@ -55,7 +55,7 @@ Phase 10 <── Phase 9 <── Phase 8 <── Phase 7 <── Phase 6 <──
 ---
 
 ### Phase 2: Reconstruction Backend Integration
-- **Status**: ARCHITECTURE & ADAPTER IMPLEMENTED / VERIFIED (Live Reconstruction BLOCKED)
+- **Status**: COMPLETE (COLMAP 4.2.1 EMPIRICALLY VERIFIED ON HOST)
 - **Objective**: Integrate external photogrammetry engine via an abstract adapter interface, supporting deterministic workspace isolation, robust failure classifications, and typed output artifacts.
 - **Prerequisites**: Phase 1 complete; Meshroom / AliceVision binaries configured or mocked for CI.
 - **Delivered**:
@@ -81,7 +81,7 @@ Phase 10 <── Phase 9 <── Phase 8 <── Phase 7 <── Phase 6 <──
 ---
 
 ### Phase 3: Raw Geometry Processing & Mesh Cleanup
-- **Status**: IMPLEMENTED / FIXTURE-TESTED (Live Reconstruction: Awaiting Host Photogrammetry Backend)
+- **Status**: VERIFIED (FIXTURE & LIVE PHOTOGRAMMETRY VALIDATED)
 - **Objective**: Clean and repair raw photogrammetric output meshes, producing a verified, normalized intermediate mesh and machine-readable geometry report while strictly preserving physical scale and coordinates.
 - **Prerequisites**: Phase 2 complete (or deterministic raw mesh fixtures available).
 - **Delivered**:

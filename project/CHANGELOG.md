@@ -4,6 +4,49 @@ This log records chronological development iterations. Every agent completing me
 
 ---
 
+## Iteration 009 — COLMAP Windows CPU Reconstruction Pipeline, Qt Plugin Resolution & Live End-to-End Verification
+- **Date**: 2026-10-28
+- **Milestone**: Phase 2 — COLMAP Photogrammetry Backend EMPIRICALLY VERIFIED on Windows Host; Phase 1 -> Phase 2 -> Phase 3 Live Handoff Verified (171 passing tests).
+- **Changes Implemented**:
+  - Extended COLMAP executable resolution to support direct executable paths, directories containing colmap.exe, and installation directories containing bin/colmap.exe without hardcoding machine-specific paths.
+  - Implemented automatic Qt platform plugin discovery discovering relative plugins/platforms directory (containing qwindows.dll) and injecting QT_QPA_PLATFORM_PLUGIN_PATH into subprocess environment while preserving existing user environment variables.
+  - Added binary capability probing (probe_capabilities) to detect builds compiled 'without GPU support' and enforce explicit CPU flags (--FeatureExtraction.use_gpu 0, --FeatureMatching.use_gpu 0).
+  - Implemented silent matcher failure detection and SQLite database match counting (_count_database_matches) on database.db, automatically retrying on CPU if GPU matching silently fails and preventing invalid execution from continuing to mapper.
+  - Implemented CPU-compatible reconstruction path: feature_extractor -> exhaustive_matcher -> mapper -> model_converter (sparse points.ply) -> delaunay_mesher (sparse surface mesh.ply).
+  - Added PLY mesh validation (_validate_ply_mesh) verifying non-empty vertex and face elements before declaring reconstruction success.
+  - Implemented dense MVS capability checking (patch_match_stereo requires CUDA/HIP); preserved sparse point clouds and Delaunay meshes when dense is unavailable or fails, keeping sparse and dense artifact paths distinct in ReconstructionResult.
+  - Implemented zero-selected-frames pre-flight check in src/loom/pipeline/runner.py, cleanly skipping external engine invocation, setting ReconstructionStatus.INVALID_INPUT, and providing actionable camera guidance when all frames fail quality filtering.
+  - Added comprehensive unit tests in tests/unit/reconstruction/test_colmap_adapter.py and tests/unit/pipeline/test_empty_input_reconstruction.py.
+- **Verification**:
+  - Full test suite: **171 passed in 11.42s** (100% pass rate, zero regressions, zero warnings).
+  - Live COLMAP run on smartphone footage (WhatsApp Video 2026-10-28 at 20.16.26.mp4): extracted 300 frames, selected 158 keyframes, matched 12,403 pairs on CPU, triangulated sparse cloud (118 points), generated Delaunay mesh (89 vertices, 158 faces) in 241.45s.
+  - Live Phase 3 handoff: mesh processor diagnosed 1 boundary loop (18 edges), repaired with 16 triangles, produced watertight solid (89 vertices, 174 faces, watertight=True, Euler=2, volume=0.0031) saved to outputs/live-test/runs/.../geometry/cleaned_mesh.obj.
+  - Live empty-input smoke test on blurry video (WIN_20261028_20_24_03_Pro.mp4): rejected all 300 frames for motion blur (sharpness 12.63), skipped reconstruction with status invalid_input in 0.00s and generated clear capture guidance.
+- **Next Steps**:
+  - Execute live capture of physical object with known-size ArUco reference marker to perform end-to-end Phase 4 metric scaling on real photogrammetric meshes.
+  - Proceed with Phase 5 ground-truth geometry validation.
+
+---
+
+## Iteration 008 — COLMAP Backend Implementation & Reconstruction Failure Classification
+- **Date**: 2026-10-28
+- **Milestone**: Phase 2 — COLMAP CLI adapter implemented; live backend execution remains unverified until an external COLMAP installation is available.
+- **Changes Implemented**:
+  - Replaced the `ColmapAdapter` stub with a subprocess-based COLMAP workflow: feature extraction, exhaustive matching, sparse mapping, image undistortion, PatchMatch stereo, stereo fusion, and Poisson meshing.
+  - Added executable resolution for explicit files/directories and `PATH`; validated input frame existence/extensions; isolated generated workspace artifacts; enforced a total-job timeout budget; logged command output and rejected missing/empty dense-cloud or mesh artifacts.
+  - Added CLI options `--reconstruction-backend` and `--reconstruction-binary`; retained `--meshroom-path` as a backward-compatible alias.
+  - Improved pipeline failure reporting so timeout, unavailable binary, invalid input, and missing artifacts retain distinct `ReconstructionStatus` values instead of all becoming `process_failed`.
+  - Added mocked COLMAP adapter tests for successful stage orchestration, binary/input errors, command failures, and missing output artifacts; added CLI option coverage.
+  - Updated reconstruction and blocker documentation to distinguish adapter tests from live photogrammetry evidence.
+- **Verification**:
+  - `PYTHONPATH=src python -m pytest -q`: **163 passed** in the available execution environment. The project targets Python 3.10; rerun in the project's Python 3.10 environment before release.
+  - No live COLMAP executable was invoked. Real reconstruction quality, GPU compatibility, registration rate, metric accuracy, and physical printability remain unverified.
+- **Next Steps**:
+  - Install/locate a compatible COLMAP CLI build and run `scripts/reconstruction_smoke_test.py` or a real COLMAP smoke workflow.
+  - Process a real smartphone capture with a known-size physical reference; inspect sparse/dense artifacts and measure dimensional error.
+
+---
+
 ## Iteration 007 — Phase 4: Metric Scaling Subsystem Implementation & Synthetic Validation
 - **Date**: 2026-10-01
 - **Milestone**: Phase 4 — Metric Scaling (IMPLEMENTED & SYNTHETICALLY VERIFIED with 155 total tests; Physical Validation Pending Live Capture with ArUco Fiducial)

@@ -47,7 +47,7 @@ def test_colmap_adapter_contract() -> None:
     assert isinstance(is_avail, bool)
 
     cfg = ReconstructionJobConfig(workspace_dir=Path("outputs/test"))
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(ValueError, match="empty list of frames"):
         adapter.reconstruct([], cfg)
 
 

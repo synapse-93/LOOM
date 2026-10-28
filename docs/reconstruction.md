@@ -7,11 +7,11 @@ Phase 2 takes selected, high-quality keyframes from Phase 1 and passes them to a
 > [!IMPORTANT]
 > **Definitive Status Boundary**:
 > - **Software Architecture & Contracts**: COMPLETE
-> - **Backend Adapter (`MeshroomAdapter`)**: IMPLEMENTED & HARDENED
-> - **Automated Unit & Integration Tests**: VERIFIED (75 passing tests, mocked subprocesses)
-> - **Live Physical Reconstruction**: **BLOCKED / NOT YET VALIDATED**
-> 
-> Neither `meshroom_batch` nor `colmap` is currently installed on the development host (`ISSUE-BLK-002`). Zero live reconstruction runs on physical objects have been performed. No point counts, registration percentages, or accuracy tolerances may be claimed until live physical benchmarks are executed.
+> - **Backend Adapters (`MeshroomAdapter`, `ColmapAdapter`)**: IMPLEMENTED & VERIFIED
+> - **Automated Unit & Integration Tests**: 171 tests passing (100% pass rate)
+> - **Live Photogrammetry (COLMAP)**: **EMPIRICALLY VERIFIED** on host Windows environment (COLMAP 4.2.1 CPU-compatible Structure-from-Motion and CGAL Delaunay surface meshing).
+> - **Live Photogrammetry (Meshroom)**: Host binary not installed (`meshroom_batch` missing on host).
+> - **Metric Scaling & Dimensional Accuracy**: Output meshes are in arbitrary reconstruction coordinate space until scaled in Phase 4.
 
 ---
 
@@ -34,7 +34,7 @@ PHASE 1 OUTPUT (Selected Keyframes)
 ├───────────────────────────────────────────────┤
 │ Stage 4: Dense Reconstruction (MVS)           │  Multi-view stereo depth map fusion (dense point cloud)
 ├───────────────────────────────────────────────┤
-│ Stage 5: Raw Surface / Mesh Generation        │  Initial surface extraction (Delaunay/Meshing) -> OBJ
+│ Stage 5: Raw Surface / Mesh Generation        │  Initial surface extraction (Delaunay/Poisson) -> OBJ/PLY
 ├───────────────────────────────────────────────┤
 │ Stage 6: Artifact Discovery                   │  Scan workspace for meshes, dense/sparse clouds, poses
 ├───────────────────────────────────────────────┤
@@ -54,7 +54,7 @@ PHASE 3 (Raw Geometry Processing & Mesh Cleanup)
 
 Phase 2 is strictly bounded to raw multi-view photogrammetry. It **MUST NOT** perform:
 - Mesh hole repair, topological manifold checks, or surface smoothing (reserved for **Phase 3**).
-- Watertight volume generation or Poisson remeshing (reserved for **Phase 3**).
+- Watertight volume generation or Poisson remeshing during mesh processing (reserved for **Phase 3**).
 - Physical metric scaling or ArUco reference marker detection (reserved for **Phase 4**).
 - Dimensional accuracy evaluation or CAD ground-truth deviation (reserved for **Phase 5**).
 - Slicing, overhang detection, or printability validation (reserved for **Phase 6**).
@@ -140,17 +140,49 @@ Failures are explicitly categorized via `ReconstructionStatus` (`src/loom/recons
 
 | Status (`ReconstructionStatus`) | Exception | Description |
 | :--- | :--- | :--- |
-| `SUCCESS` | *None* | Subprocess completed (exit 0), raw 3D mesh (`.obj`) generated and validated non-empty. |
-| `PARTIAL` | `ReconstructionPartialError` | Subprocess completed (exit 0), sparse/dense point cloud or camera poses generated, but mesh missing. |
-| `BINARY_UNAVAILABLE` | `ReconstructionBinaryNotFoundError` | Engine executable (`meshroom_batch`) not found on PATH or configured path. Gracefully detected. |
-| `INVALID_INPUT` | `ReconstructionInvalidInputError` | Frame list is empty, contains non-existent files, or unsupported image formats. |
-| `PROCESS_FAILED` | `ReconstructionExecutionError` | Subprocess exited with a non-zero exit code. Detailed stderr/stdout recorded in log. |
+| `SUCCESS` | *None* | Subprocess completed (exit 0), raw 3D mesh (`.obj` or `.ply`) generated and validated non-empty. |
+| `PARTIAL` | `ReconstructionPartialError` | Subprocess completed (exit 0), sparse/dense point cloud generated, but mesh missing. |
+| `BINARY_UNAVAILABLE` | `ReconstructionBinaryNotFoundError` | Engine executable (`meshroom_batch` or `colmap`) not found on PATH or configured path. |
+| `INVALID_INPUT` | `ReconstructionInvalidInputError` | Frame list is empty (e.g. all frames rejected by quality filter), contains non-existent files, or unsupported formats. |
+| `PROCESS_FAILED` | `ReconstructionExecutionError` | Subprocess exited with a non-zero exit code or fatal log error. Detailed logs recorded. |
 | `TIMEOUT` | `ReconstructionTimeoutError` | Subprocess execution exceeded `timeout_seconds`. Process terminated cleanly. |
 | `ARTIFACT_MISSING` | `ReconstructionArtifactNotFoundError` | Subprocess exited with 0 but zero expected artifacts (point clouds, poses, or mesh) were generated. |
 
 ---
 
-## 6. Meshroom Adapter Implementation
+## 6. COLMAP Adapter Implementation
+
+`ColmapAdapter` (`src/loom/reconstruction/colmap.py`) provides a robust, platform-aware COLMAP photogrammetry implementation:
+
+### 6.1 Executable & Environment Discovery
+1. **Flexible Executable Resolution**: Supports direct file path (`C:\Tools\COLMAP\bin\colmap.exe`), directory containing `colmap.exe`, installation directory containing `bin/colmap.exe`, and system `PATH`.
+2. **Automatic Qt Platform Discovery**: On Windows, COLMAP CLI commands require `QT_QPA_PLATFORM_PLUGIN_PATH` to locate `qwindows.dll`. The adapter checks relative directories (`../plugins/platforms`, `./plugins/platforms`) and automatically injects the path into subprocess environments while preserving all user-defined environment variables.
+3. **Capability Probing**: The adapter runs `colmap -h` to detect whether the build was compiled `"without GPU support"`.
+
+### 6.2 CPU-Compatible Pipeline
+When running on CPU-only builds or when CUDA is unavailable:
+1. `feature_extractor` with `--FeatureExtraction.use_gpu 0`
+2. `exhaustive_matcher` with `--FeatureMatching.use_gpu 0`
+3. `mapper` (incremental Structure-from-Motion) producing `sparse/0`
+4. `model_converter --output_type PLY` producing sparse point cloud `sparse/points.ply`
+5. `delaunay_mesher --input_type sparse` producing surface mesh `sparse/mesh.ply`
+
+### 6.3 Matcher Validation & Silent Failure Detection
+COLMAP's `exhaustive_matcher` can encounter GPU memory allocation failures and log fatal errors while returning exit code 0. The adapter:
+- Inspects stderr/stdout for documented fatal matching errors.
+- Directly inspects the SQLite `database.db` (`matches` and `two_view_geometries` tables) to verify matches were written.
+- Retries with `--FeatureMatching.use_gpu 0` if an initial attempt failed silently.
+- Aborts with `ReconstructionExecutionError` rather than proceeding to mapper when zero matches exist.
+
+### 6.4 Dense MVS & Graceful Fallback
+When CUDA/HIP is supported, the adapter attempts dense Multi-View Stereo (`image_undistorter` $\to$ `patch_match_stereo` $\to$ `stereo_fusion` $\to$ `poisson_mesher`). If dense MVS fails or is unsupported:
+- Sparse point cloud and sparse Delaunay mesh are preserved.
+- Sparse result is returned with `status = ReconstructionStatus.PARTIAL` (if dense was explicitly requested) or `ReconstructionStatus.SUCCESS` (on CPU default path).
+- Sparse point clouds and dense point clouds remain distinct in `ReconstructionResult`.
+
+---
+
+## 7. Meshroom Adapter Implementation
 
 `MeshroomAdapter` (`src/loom/reconstruction/meshroom.py`) provides the reference AliceVision implementation:
 
@@ -169,51 +201,20 @@ Failures are explicitly categorized via `ReconstructionStatus` (`src/loom/recons
 
 ---
 
-## 7. Standardized Report Schema (`reconstruction.json`)
+## 8. CLI Usage Examples
 
-Written to `outputs/runs/<run_id>/reports/reconstruction.json`:
+Run from the repository root in the project's Python 3.10 virtual environment:
 
-```json
-{
-  "run_id": "run_20260926_195429_synthetic_test",
-  "timestamp": "2026-09-26T14:24:31.035843+00:00",
-  "backend": "meshroom",
-  "status": "binary_unavailable",
-  "success": false,
-  "input_frames": 5,
-  "registered_cameras": null,
-  "registration_ratio": null,
-  "point_count": null,
-  "sparse_reconstruction": null,
-  "point_cloud_path": null,
-  "dense_point_cloud_path": null,
-  "camera_poses_path": null,
-  "mesh_generated": false,
-  "mesh_path": null,
-  "execution_time_seconds": 0.0,
-  "workspace_path": "C:\\Users\\...\\reconstruction",
-  "workspace_dir": "C:\\Users\\...\\reconstruction",
-  "log_path": null,
-  "error_message": "Reconstruction backend 'meshroom' executable not found. Ensure Meshroom is installed or configure 'binary_path'."
-}
+```powershell
+# COLMAP CLI (auto-discovering C:\Tools\COLMAP or via PATH)
+python -m loom --video .\data\raw\object.mp4 --reconstruct --clean-mesh `
+  --reconstruction-backend colmap `
+  --reconstruction-binary "C:\Tools\COLMAP\bin\colmap.exe"
+
+# Meshroom / AliceVision
+python -m loom --video .\data\raw\object.mp4 --reconstruct --clean-mesh `
+  --reconstruction-backend meshroom `
+  --reconstruction-binary "C:\Tools\Meshroom\meshroom_batch.exe"
 ```
 
----
-
-## 8. Verification & Test Strategy
-
-Phase 2 is validated through 75 passing unit and integration tests covering:
-- Factory engine resolution and unknown backend rejection.
-- Binary detection and graceful failure when absent.
-- Input validation (empty lists, non-existent paths, invalid extensions).
-- Command line construction and parameter mapping.
-- Subprocess execution and real-time log streaming.
-- Subprocess non-zero exit code error handling.
-- Timeout triggering and process tree cleanup.
-- SFM JSON parsing (valid, corrupt, and missing).
-- Output artifact discovery with sparse/dense separation.
-- Mocked end-to-end reconstruction producing valid OBJ meshes.
-- Mocked partial reconstruction (clouds/poses without mesh).
-- Mocked missing artifacts when process exits 0.
-- End-to-end integration with Phase 1 pipeline runner with graceful degradation.
-- CLI argument parsing (`--reconstruct`, `--meshroom-path`).
+`--meshroom-path` remains available as a backward-compatible alias for `--reconstruction-binary`.

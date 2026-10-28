@@ -9,8 +9,8 @@ This document tracks active blockers, known limitations, technical debt, researc
 - **ISSUE-BLK-002: Meshroom / AliceVision Executable Missing on Development Host**
   - **Discovered**: 2026-09-26 (Phase 2 Environment Discovery)
   - **Description**: `meshroom_batch` is not installed on the development host system. System PATH, standard Windows program directories, and winget registry contain neither AliceVision nor Meshroom.
-  - **Impact**: Blocks live 3D reconstruction execution on real capture data. The `MeshroomAdapter` code is fully implemented and passes all unit tests with mocked subprocess execution, but running `--reconstruct` against live binaries requires the developer to install Meshroom (https://alicevision.org/#meshroom) and either add it to PATH or pass `--meshroom-path`.
-  - **Mitigation**: Implemented full headless mock tests (`test_meshroom_adapter.py`), clear diagnostic instructions via `scripts/reconstruction_smoke_test.py`, and explicit `--meshroom-path` CLI / config override.
+  - **Impact**: Blocks live 3D reconstruction execution on real capture data until an external backend is installed. `MeshroomAdapter` and `ColmapAdapter` are implemented and covered by mocked subprocess tests; this does not prove a live backend run.
+  - **Mitigation**: Use `scripts/reconstruction_smoke_test.py` to check Meshroom availability. Install Meshroom or COLMAP, then use `--reconstruction-backend` with `--reconstruction-binary` (the old `--meshroom-path` option remains an alias).
 
 
 ---
@@ -49,6 +49,12 @@ This document tracks active blockers, known limitations, technical debt, researc
 
 ---
 
+- **ISSUE-LIM-006: Host COLMAP 4.2.1 Windows Build Lacks CUDA Acceleration for Dense MVS**
+  - **Discovered**: 2026-10-28 (COLMAP capability audit)
+  - **Description**: The precompiled COLMAP 4.2.1 binary at C:\Tools\COLMAP reports 'without GPU support'. While CPU SfM and Delaunay meshing function reliably, dense MVS (patch_match_stereo) requires CUDA/HIP compilation and will fail on CPU.
+  - **Impact**: Phase 2 uses CPU Delaunay meshing on sparse SfM tie points. Dense depth maps and dense Poisson meshes cannot be generated until a CUDA-enabled COLMAP build is installed.
+  - **Mitigation**: Implemented dynamic capability probing in ColmapAdapter; automatically runs CPU Delaunay meshing path, preserving sparse point clouds and Delaunay meshes without crashing.
+
 ## 3. Technical Debt
 
 *No technical debt currently identified. The codebase is greenfield.*
@@ -74,3 +80,8 @@ This document tracks active blockers, known limitations, technical debt, researc
   - **Resolved**: 2026-09-26 (Iteration 001)
   - **Description**: Windows `py` launcher registry listed Python 3.10 at a non-existent path on disk.
   - **Resolution**: Installed Python 3.10.11 via `winget`, created isolated virtual environment `.venv`, installed minimal dependencies (`pyyaml`, `pytest`), installed package in editable mode, and verified complete test suite.
+
+- **ISSUE-RES-002: Host Photogrammetry Reconstruction Backend Operational**
+  - **Resolved**: 2026-10-28 (Iteration 009)
+  - **Description**: Development host previously lacked an operational photogrammetry backend, blocking live 3D reconstruction on real footage (ISSUE-BLK-002).
+  - **Resolution**: COLMAP 4.2.1 configured and hardened at C:\Tools\COLMAP. Resolved Windows Qt platform plugin path requirement (QT_QPA_PLATFORM_PLUGIN_PATH), implemented CPU feature extraction/matching flags, SQLite match validation, and CGAL Delaunay meshing. Verified live end-to-end execution on smartphone video (EXP-008).

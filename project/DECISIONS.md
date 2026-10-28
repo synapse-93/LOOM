@@ -15,6 +15,7 @@ This document records the architectural and engineering decisions accepted for V
 - [ADR-007: Explicit Reconstruction Failure Classification and Decoupled Multi-Tier Artifact Model](#adr-007-explicit-reconstruction-failure-classification-and-decoupled-multi-tier-artifact-model)
 - [ADR-008: Conservative Defect Repair and Graph-Engine Independence in Mesh Processing](#adr-008-conservative-defect-repair-and-graph-engine-independence-in-mesh-processing)
 - [ADR-009: Coordinate Value and Physical Scale Preservation During Mesh Cleanup & Normalization](#adr-009-coordinate-value-and-physical-scale-preservation-during-mesh-cleanup--normalization)
+- [ADR-010: CPU-Compatible COLMAP Reconstruction and Automatic Environment Discovery](#adr-010-cpu-compatible-colmap-reconstruction-and-automatic-environment-discovery)
 
 ---
 
@@ -187,3 +188,23 @@ This document records the architectural and engineering decisions accepted for V
 
 
 
+
+---
+
+## ADR-010: CPU-Compatible COLMAP Reconstruction and Automatic Environment Discovery
+
+- **Status**: ACCEPTED
+- **Date**: 2026-10-28
+- **Decision**: Support CPU-only COLMAP installations (such as Windows COLMAP 4.2.1 builds without CUDA) by discovering executable structures (bin/colmap.exe, colmap.exe, PATH), auto-discovering Qt platform plugins (QT_QPA_PLATFORM_PLUGIN_PATH), passing explicit CPU flags (--FeatureExtraction.use_gpu 0, --FeatureMatching.use_gpu 0), verifying database matching counts, and using model_converter (sparse PLY) + delaunay_mesher (sparse Delaunay surface mesh) on CPU. Probe CUDA/HIP capability before attempting dense MVS (patch_match_stereo), gracefully preserving sparse point clouds and meshes without failing or falsifying dense reports when CUDA is unavailable.
+- **Reason**:
+  - On Windows, COLMAP binaries compiled with Qt fail immediately with code 0xC0000409 unless QT_QPA_PLATFORM_PLUGIN_PATH is set to the platforms directory containing qwindows.dll.
+  - COLMAP 4.2.1 precompiled Windows releases may lack GPU support or encounter GPU VRAM exhaustion during exhaustive matching. When matching fails on GPU, COLMAP logs an error but returns exit code 0; checking SQLite database.db and output logs prevents proceeding to mapper with empty matches.
+  - Dense MVS (patch_match_stereo) is strictly compiled with #if !defined(COLMAP_CUDA_ENABLED) && !defined(COLMAP_HIP_ENABLED) LOG(FATAL_THROW) and cannot run on CPU builds.
+  - COLMAP's CGAL-based 3D Delaunay mesher (colmap delaunay_mesher --input_type sparse) executes purely on CPU, producing a valid 3D surface mesh from sparse tie points that feeds directly into Phase 3 geometry cleaning.
+- **Alternatives Considered**:
+  - Require CUDA GPU and reject CPU builds: Severely restricts developer and deployment environments where GPU drivers or CUDA builds of COLMAP are unavailable.
+  - Blindly invoke patch_match_stereo on CPU: Crashes with status code 3221226505 (0xC0000409) on CPU builds.
+  - Hardcode C:\Tools\COLMAP: Violates portable architecture guidelines.
+- **Consequences**:
+  - CPU-only builds produce valid sparse point clouds and watertight Delaunay surface meshes in Phase 2, enabling the entire downstream pipeline (cleaning, repair, scaling, validation) to function.
+  - Dense MVS remains an optional upgrade path when CUDA-capable COLMAP binaries and hardware are present.

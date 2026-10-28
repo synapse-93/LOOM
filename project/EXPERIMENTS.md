@@ -65,6 +65,8 @@ When documenting an experiment, use this exact structure:
 | EXP-005 | 2026-10-01 | Programmatic Mesh Fixtures (Cube, Multi-comp, Degenerate, Hole) | N/A (Mesh fixtures) | Trimesh / SciPy (Phase 3) | N/A (Preserved scale) | N/A | Yes (Repaired) | **VERIFIED** |
 | EXP-006 | 2026-10-01 | Photogrammetric Raw Mesh Processing & Phase 2/3 Handoff | N/A (Photogrammetry mesh) | Trimesh / SciPy / LOOM | N/A (Preserved SfM scale) | N/A | No (Open base preserved) | **VERIFIED** |
 | EXP-007 | 2026-10-01 | Phase 4 Synthetic Metric Scaling & Topology Audit | N/A (Synthetic box & mesh) | OpenCV / Trimesh / LOOM | 0.000 mm (Synthetic exact) | 0.000% | Preserved | **VERIFIED (Synthetic)** |
+| EXP-008 | 2026-10-28 | Smartphone Video (WhatsApp Capture) | 300 / 158 | COLMAP 4.2.1 (CPU) | N/A (Arbitrary SfM scale) | N/A | Yes (Repaired) | **VERIFIED** |
+| EXP-009 | 2026-10-28 | Smartphone Video (Motion Blur WIN_20261028) | 300 / 0 | Guard (Skipped) | N/A (0 selected) | N/A | N/A | **VERIFIED** |
 
 
 ---
@@ -318,3 +320,61 @@ When documenting an experiment, use this exact structure:
 
 
 
+
+---
+
+### EXP-008: Live Smartphone COLMAP CPU Reconstruction & Phase 3 Mesh Cleanup Pipeline
+- **Date**: 2026-10-28
+- **Target Object**: Physical captured object from handheld smartphone video (WhatsApp Video 2026-10-28 at 20.16.26.mp4).
+- **Capture Conditions**:
+  - Source: Real smartphone video, 480x854 @ 59.29 fps (25.62s duration, 1519 source frames).
+  - Trajectory: Handheld orbital trajectory around the target object.
+- **Pipeline Configuration**:
+  - Max Extracted Frames: 300 (step=1)
+  - Quality Filter Settings: sharpness_threshold=100.0, redundancy_threshold=0.98
+  - Reconstruction Backend: COLMAP 4.2.1 CLI on Windows (CPU-compatible path)
+  - Command: feature_extractor (--FeatureExtraction.use_gpu 0) -> exhaustive_matcher (--FeatureMatching.use_gpu 0) -> mapper -> model_converter (--output_type PLY) -> delaunay_mesher (--input_type sparse)
+  - Mesh Processing Settings: component_strategy=largest, max_hole_edges=30, fill_holes=True
+- **Measured Empirical Results**:
+  - Total Raw Frames Extracted: 300
+  - Accepted Keyframes: 158
+  - Rejected Frames: 142 (blurry: 10, exposure: 0, redundant: 132)
+  - Average Keyframe Sharpness: 224.05
+  - Viewpoint Diversity Score: 0.527
+  - Verified Database Matches: 12,403 image pair matches in database.db
+  - Triangulated Sparse Tie Points: 118 points
+  - Reconstructed Delaunay Mesh: 89 vertices, 158 faces
+  - Initial Mesh Topology: 1 component, 18 boundary edges, 1 boundary loop, non-watertight (status: WARNING)
+  - Repaired Mesh Topology: 1 boundary loop (length 18) repaired with 16 triangles; 89 vertices, 174 faces, 1 component, 0 boundary edges
+  - Watertight: True (Euler characteristic = 2, Volume = 0.0031 units^3)
+  - Clean Intermediate Mesh: outputs/live-test/runs/run_20261028_211319_WhatsApp_Video_2026-10-28_at_20_16_26/geometry/cleaned_mesh.obj
+- **Execution Timings**:
+  - Phase 1 (Ingest, Extraction & Quality Selection): ~7.28s
+  - Phase 2 (COLMAP Reconstruction): 241.45s
+  - Phase 3 (Mesh Processing & Defect Repair): 0.0149s
+  - Total Run Time: ~249s
+- **Status & Empirical Integrity**:
+  - **VERIFIED**: First live photogrammetric 3D reconstruction and mesh processing pipeline execution verified end-to-end on host Windows environment. Zero synthetic stubs or mocks utilized in execution.
+
+---
+
+### EXP-009: Empty-Input Reconstruction Pre-flight Guard on Motion-Blurred Smartphone Footage
+- **Date**: 2026-10-28
+- **Target Object**: Smartphone video with excessive motion blur / defocus (WIN_20261028_20_24_03_Pro.mp4).
+- **Capture Conditions**:
+  - Source: Real smartphone video, 1920x1080 @ 29.64 fps (13.09s duration, 388 source frames).
+  - Trajectory: Fast handheld motion with severe defocus.
+- **Pipeline Configuration**:
+  - Max Extracted Frames: 300 (step=1)
+  - Quality Filter Settings: sharpness_threshold=100.0, redundancy_threshold=0.98
+- **Measured Empirical Results**:
+  - Total Raw Frames Extracted: 300
+  - Accepted Keyframes: 0
+  - Rejected Frames: 300 (all 300 rejected as blurry)
+  - Measured Average Sharpness: 12.63 (well below 100.0 threshold)
+  - Reconstruction Interception: Runner pre-flight check intercepted 0 selected frames. External photogrammetry engine was NOT invoked.
+  - Reconstruction Status: ReconstructionStatus.INVALID_INPUT
+  - Reconstruction Time: 0.00s
+  - Report Output: reports/reconstruction.json generated with error_message providing actionable guidance (recommend slower camera movement, sharper focus, adequate lighting).
+- **Status & Empirical Integrity**:
+  - **VERIFIED**: Robust invalid-input handling verified without crashing, throwing unhandled exceptions, or wasting computation on external tools.

@@ -63,10 +63,21 @@ def main(argv: list[str] | None = None) -> int:
         help="Execute 3D reconstruction stage on selected keyframes (Phase 2).",
     )
     parser.add_argument(
+        "--reconstruction-backend",
+        choices=("meshroom", "colmap"),
+        default=None,
+        help="Photogrammetry backend to use for --reconstruct (default: config value).",
+    )
+    parser.add_argument(
+        "--reconstruction-binary",
         "--meshroom-path",
+        dest="reconstruction_binary",
         type=Path,
         default=None,
-        help="Explicit path to meshroom_batch executable binary.",
+        help=(
+            "Explicit path to the selected backend executable (meshroom_batch or colmap). "
+            "--meshroom-path is retained as a backward-compatible alias."
+        ),
     )
     parser.add_argument(
         "--mesh",
@@ -178,9 +189,13 @@ def main(argv: list[str] | None = None) -> int:
     if output_dir_arg is not None:
         config.output_dir = output_dir_arg
 
-    meshroom_path_arg = getattr(args, "meshroom_path", None)
-    if meshroom_path_arg is not None:
-        config.reconstruction.binary_path = meshroom_path_arg
+    reconstruction_backend_arg = getattr(args, "reconstruction_backend", None)
+    if reconstruction_backend_arg is not None:
+        config.reconstruction.backend = reconstruction_backend_arg
+
+    reconstruction_binary_arg = getattr(args, "reconstruction_binary", None)
+    if reconstruction_binary_arg is not None:
+        config.reconstruction.binary_path = reconstruction_binary_arg
 
     # Determine if this is a standalone mesh processing run
     target_mesh = None

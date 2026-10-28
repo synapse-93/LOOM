@@ -27,6 +27,12 @@ from loom.pipeline.artifacts import (
     VideoArtifact,
 )
 from loom.pipeline.stages import PipelineStage
+from loom.reconstruction.exceptions import (
+    ReconstructionArtifactNotFoundError,
+    ReconstructionBinaryNotFoundError,
+    ReconstructionInvalidInputError,
+    ReconstructionTimeoutError,
+)
 from loom.reconstruction.models import (
     ReconstructionJobConfig,
     ReconstructionResult,
@@ -265,55 +271,90 @@ def run_phase1_pipeline(
                 config.reconstruction.backend,
             )
             recon_workspace = ensure_directory(base_run_dir / "reconstruction")
-            job_cfg = ReconstructionJobConfig(
-                workspace_dir=recon_workspace,
-                quality_preset=config.reconstruction.quality,
-                timeout_seconds=config.reconstruction.timeout_seconds,
-                binary_path=config.reconstruction.binary_path,
-                keep_workspace=config.reconstruction.keep_workspace,
-                additional_args=config.reconstruction.additional_args,
-            )
 
-            try:
-                engine = ReconstructionRunner.get_engine(
-                    config.reconstruction.backend,
-                    binary_path=config.reconstruction.binary_path,
+            if len(selected_copied_paths) == 0:
+                logger.warning(
+                    "Reconstruction skipped: 0 frames selected by quality filter. "
+                    "All extracted frames were rejected."
                 )
-                if not engine.is_available():
-                    logger.warning(
-                        "Reconstruction backend '%s' executable is not available on host system.",
-                        config.reconstruction.backend,
-                    )
-                    reconstruction_result = ReconstructionResult(
-                        mesh_path=None,
-                        point_cloud_path=None,
-                        camera_poses_path=None,
-                        success=False,
-                        backend_name=config.reconstruction.backend,
-                        status=ReconstructionStatus.BINARY_UNAVAILABLE,
-                        error_message=(
-                            f"Reconstruction backend '{config.reconstruction.backend}' executable not found. "
-                            "Ensure Meshroom is installed or configure 'binary_path'."
-                        ),
-                        input_frames_count=len(selected_copied_paths),
-                        log_path=None,
-                    )
-                else:
-                    reconstruction_result = engine.reconstruct(selected_copied_paths, job_cfg)
-            except Exception as e:
-                logger.error("Reconstruction execution failed: %s", e)
-                log_candidate = recon_workspace / "reconstruction.log"
                 reconstruction_result = ReconstructionResult(
                     mesh_path=None,
                     point_cloud_path=None,
                     camera_poses_path=None,
                     success=False,
                     backend_name=config.reconstruction.backend,
-                    status=ReconstructionStatus.PROCESS_FAILED,
-                    error_message=str(e),
-                    input_frames_count=len(selected_copied_paths),
-                    log_path=log_candidate if log_candidate.is_file() else None,
+                    status=ReconstructionStatus.INVALID_INPUT,
+                    error_message=(
+                        "Cannot perform 3D reconstruction: 0 frames selected by quality filter. "
+                        "All extracted frames were rejected (e.g. blur or exposure defects). "
+                        "Recapturing the object with slower camera movement, sharper focus, "
+                        "and adequate lighting is recommended, or adjust 'sharpness_threshold' in configuration."
+                    ),
+                    input_frames_count=0,
+                    workspace_dir=recon_workspace,
+                    log_path=None,
                 )
+            else:
+                job_cfg = ReconstructionJobConfig(
+                    workspace_dir=recon_workspace,
+                    quality_preset=config.reconstruction.quality,
+                    timeout_seconds=config.reconstruction.timeout_seconds,
+                    binary_path=config.reconstruction.binary_path,
+                    keep_workspace=config.reconstruction.keep_workspace,
+                    additional_args=config.reconstruction.additional_args,
+                )
+
+                try:
+                    engine = ReconstructionRunner.get_engine(
+                        config.reconstruction.backend,
+                        binary_path=config.reconstruction.binary_path,
+                    )
+                    if not engine.is_available():
+                        logger.warning(
+                            "Reconstruction backend '%s' executable is not available on host system.",
+                            config.reconstruction.backend,
+                        )
+                        reconstruction_result = ReconstructionResult(
+                            mesh_path=None,
+                            point_cloud_path=None,
+                            camera_poses_path=None,
+                            success=False,
+                            backend_name=config.reconstruction.backend,
+                            status=ReconstructionStatus.BINARY_UNAVAILABLE,
+                            error_message=(
+                                f"Reconstruction backend '{config.reconstruction.backend}' executable not found. "
+                                "Ensure Meshroom is installed or configure 'binary_path'."
+                            ),
+                            input_frames_count=len(selected_copied_paths),
+                            log_path=None,
+                        )
+                    else:
+                        reconstruction_result = engine.reconstruct(selected_copied_paths, job_cfg)
+                except Exception as e:
+                    logger.error("Reconstruction execution failed: %s", e)
+                    log_candidate = recon_workspace / "logs" / "reconstruction.log"
+                    if isinstance(e, ReconstructionTimeoutError):
+                        failure_status = ReconstructionStatus.TIMEOUT
+                    elif isinstance(e, ReconstructionBinaryNotFoundError):
+                        failure_status = ReconstructionStatus.BINARY_UNAVAILABLE
+                    elif isinstance(e, ReconstructionInvalidInputError):
+                        failure_status = ReconstructionStatus.INVALID_INPUT
+                    elif isinstance(e, ReconstructionArtifactNotFoundError):
+                        failure_status = ReconstructionStatus.ARTIFACT_MISSING
+                    else:
+                        failure_status = ReconstructionStatus.PROCESS_FAILED
+                    reconstruction_result = ReconstructionResult(
+                        mesh_path=None,
+                        point_cloud_path=None,
+                        camera_poses_path=None,
+                        success=False,
+                        backend_name=config.reconstruction.backend,
+                        status=failure_status,
+                        error_message=str(e),
+                        input_frames_count=len(selected_copied_paths),
+                        workspace_dir=recon_workspace,
+                        log_path=log_candidate if log_candidate.is_file() else None,
+                    )
 
             # Write reconstruction.json report
             reconstruction_report_path = reports_dir / "reconstruction.json"
