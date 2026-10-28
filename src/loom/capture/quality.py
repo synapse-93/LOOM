@@ -12,6 +12,7 @@ import numpy as np
 from loom.capture.guidance import CaptureGuidance
 from loom.config.models import CaptureConfig
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,6 +24,8 @@ class FrameQualityResult:
     sharpness: float
     brightness: float
     contrast: float
+    texture_score: float
+    is_low_texture: bool
     is_blurry: bool
     is_underexposed: bool
     is_overexposed: bool
@@ -88,6 +91,12 @@ class FrameQualityAssessor:
         brightness = float(np.mean(gray))
         contrast = float(np.std(gray))
 
+        # Heuristic indicator of visible local detail; not a reconstruction guarantee.
+        texture_score = sharpness
+        is_low_texture = texture_score < getattr(
+            self.config, "min_texture_score", 10.0
+        )
+
         reasons: list[str] = []
 
         is_blurry = sharpness < self.config.sharpness_threshold
@@ -106,7 +115,15 @@ class FrameQualityAssessor:
 
         is_low_contrast = contrast < getattr(self.config, "min_contrast", 15.0)
         if is_low_contrast:
-            reasons.append(f"Low contrast (std dev {contrast:.1f} < 15.0)")
+            reasons.append(
+                f"Low contrast (std dev {contrast:.1f} < 15.0)"
+        )
+
+        if is_low_texture:
+            reasons.append(
+                f"Low visible detail (heuristic score {texture_score:.1f} "
+                f"< threshold {self.config.min_texture_score:.1f})"
+        )
 
         # Redundancy comparison using 64x64 normalized thumbnail
         thumb = cv2.resize(gray, (64, 64), interpolation=cv2.INTER_AREA)
@@ -131,6 +148,8 @@ class FrameQualityAssessor:
             sharpness=round(sharpness, 2),
             brightness=round(brightness, 2),
             contrast=round(contrast, 2),
+            texture_score=round(texture_score, 2),
+            is_low_texture=is_low_texture,
             is_blurry=is_blurry,
             is_underexposed=is_underexposed,
             is_overexposed=is_overexposed,
@@ -166,6 +185,7 @@ class FrameQualityAssessor:
         blurry_count = 0
         exposure_count = 0
         redundant_count = 0
+        low_texture_count = 0
 
         for path in frame_paths:
             res, prev_thumb = self.evaluate_frame(path, prev_thumb)
@@ -176,6 +196,8 @@ class FrameQualityAssessor:
                 blurry_count += 1
             if res.is_underexposed or res.is_overexposed or res.is_low_contrast:
                 exposure_count += 1
+            if res.is_low_texture:
+                low_texture_count += 1
             if res.is_redundant:
                 redundant_count += 1
 
@@ -224,12 +246,14 @@ class FrameQualityAssessor:
                 "exposure_defect_count": exposure_count,
                 "redundant_count": redundant_count,
                 "diversity_score": diversity_score,
+                "low_texture_count": low_texture_count,
                 "thresholds": {
                     "sharpness": self.config.sharpness_threshold,
                     "min_brightness": getattr(self.config, "min_brightness", 30.0),
                     "max_brightness": getattr(self.config, "max_brightness", 235.0),
                     "min_contrast": getattr(self.config, "min_contrast", 15.0),
                     "redundancy_threshold": getattr(self.config, "redundancy_threshold", 0.98),
+                    "min_texture_score": getattr(self.config, "min_texture_score", 10.0),
                 },
             },
         )

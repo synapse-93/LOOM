@@ -314,6 +314,38 @@ When documenting an experiment, use this exact structure:
   - Implementation & Synthetic Validation: **VERIFIED** (Exact deterministic scaling, zero topology distortion)
   - Physical Ground Truth Accuracy Validation: **PENDING LIVE PHYSICAL EXPERIMENT** (Requires real captured video of physical object with physical ArUco fiducial once host photogrammetry backend is unblocked `ISSUE-BLK-002`)
 
+---
+
+### EXP-008: Capture Quality Heuristic and Regression Test Verification
+
+- **Date**: 2026-10-28
+- **Target**: Automated unit tests for LOOM capture-quality analysis.
+- **Scope**:
+  - Existing sharpness, brightness, contrast, and redundancy checks.
+  - Provisional low-visible-detail heuristic using Laplacian variance.
+  - Guidance wording that avoids guaranteeing successful 3D reconstruction.
+  - Capture coverage estimator contract tests.
+- **Configuration**:
+  - Default sharpness threshold: 100.0.
+  - Default low-texture heuristic threshold: 10.0.
+  - Low-texture score currently reuses the Laplacian-variance sharpness score.
+- **Observed Software Test Results**:
+  - Command: `python -m pytest tests\unit\capture -q`
+  - Environment: `PYTHONPATH=src`
+  - Result: 13 tests passed.
+  - A synthetic uniform grayscale image was used to test the low-visible-detail heuristic.
+  - `git diff --check` completed without reporting whitespace errors.
+- **Interpretation and Limitations**:
+  - These results verify the tested software behavior only.
+  - The low-texture threshold is provisional and has not been validated against a representative physical-capture dataset.
+  - The heuristic is not an independent texture measurement and may overlap with blur detection.
+  - No new physical-object measurements, live photogrammetric reconstruction results, dimensional errors, or print-validation results were established by this test run.
+- **Physical Validation Status**: Not performed as part of this experiment.
+- **Conclusion and Next Steps**:
+  - Capture unit tests passed for the tested cases.
+  - Evaluate the heuristic on real captured frames before treating the threshold as validated.
+  - Record physical measurements and reconstruction outcomes only after the corresponding experiments have been performed.
+
 
 
 

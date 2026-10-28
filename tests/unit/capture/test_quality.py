@@ -160,3 +160,42 @@ def test_assess_and_filter_sequence(tmp_path: Path) -> None:
     assert artifact.metadata["total_candidate_frames"] == 3
     assert artifact.metadata["selected_count"] == 1
     assert artifact.metadata["rejected_count"] == 2
+
+def test_guidance_does_not_guarantee_reconstruction() -> None:
+    """Guidance must not imply capture checks guarantee reconstruction success."""
+    from loom.capture.guidance import CaptureGuidance
+
+    recommendations = CaptureGuidance.generate_recommendations(
+        average_sharpness=200.0,
+        blur_ratio=0.0,
+        coverage_score=0.9,
+        low_exposure_ratio=0.0,
+        redundancy_ratio=0.0,
+    )
+
+    message = " ".join(recommendations).lower()
+    assert "does not guarantee" in message
+    assert "ready for 3d reconstruction" not in message
+
+
+def test_low_texture_heuristic_detects_uniform_frame(tmp_path):
+    """Uniform images should trigger the low-texture heuristic."""
+    import cv2
+    import numpy as np
+
+    from loom.capture.quality import FrameQualityAssessor
+    from loom.config.models import CaptureConfig
+
+    image = np.full((100, 100), 128, dtype=np.uint8)
+    frame_path = tmp_path / "uniform.png"
+    assert cv2.imwrite(str(frame_path), image)
+
+    assessor = FrameQualityAssessor(CaptureConfig())
+    result, _ = assessor.evaluate_frame(frame_path)
+
+    assert result.is_low_texture
+    assert result.texture_score < 10.0
+    assert any(
+        "Low visible detail" in reason
+        for reason in result.rejection_reasons
+    )
