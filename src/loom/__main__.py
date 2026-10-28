@@ -94,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--log-level",
         default="INFO",
+        type=lambda v: v.upper() if isinstance(v, str) else v,
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Logging verbosity level.",
     )

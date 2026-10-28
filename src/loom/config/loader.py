@@ -53,6 +53,7 @@ def _parse_dict_to_config(data: dict[str, Any]) -> LoomConfig:
             min_brightness=float(c.get("min_brightness", config.capture.min_brightness)),
             max_brightness=float(c.get("max_brightness", config.capture.max_brightness)),
             min_contrast=float(c.get("min_contrast", config.capture.min_contrast)),
+            min_texture_score=float(c.get("min_texture_score", config.capture.min_texture_score)),
             redundancy_threshold=float(c.get("redundancy_threshold", config.capture.redundancy_threshold)),
         )
 
@@ -74,7 +75,7 @@ def _parse_dict_to_config(data: dict[str, Any]) -> LoomConfig:
             clean_outliers=bool(p.get("clean_outliers", config.pointcloud.clean_outliers)),
             nb_neighbors=int(p.get("nb_neighbors", config.pointcloud.nb_neighbors)),
             std_ratio=float(p.get("std_ratio", config.pointcloud.std_ratio)),
-            voxel_downsample_size=float(p["voxel_downsample_size"]) if p.get("voxel_downsample_size") else None,
+            voxel_downsample_size=float(p["voxel_downsample_size"]) if p.get("voxel_downsample_size") is not None else None,
         )
 
     if "mesh" in data and isinstance(data["mesh"], dict):
@@ -82,9 +83,19 @@ def _parse_dict_to_config(data: dict[str, Any]) -> LoomConfig:
         config.mesh = MeshConfig(
             clean_outliers=bool(m.get("clean_outliers", config.mesh.clean_outliers)),
             close_holes=bool(m.get("close_holes", config.mesh.close_holes)),
+            fill_holes=bool(m.get("fill_holes", config.mesh.fill_holes)),
             max_hole_size=int(m.get("max_hole_size", config.mesh.max_hole_size)),
+            max_hole_edges=int(m.get("max_hole_edges", config.mesh.max_hole_edges)),
             poisson_depth=int(m.get("poisson_depth", config.mesh.poisson_depth)),
-            target_face_count=int(m["target_face_count"]) if m.get("target_face_count") else None,
+            target_face_count=int(m["target_face_count"]) if m.get("target_face_count") is not None else config.mesh.target_face_count,
+            component_strategy=str(m.get("component_strategy", config.mesh.component_strategy)),
+            min_component_faces=int(m.get("min_component_faces", config.mesh.min_component_faces)),
+            min_component_ratio=float(m.get("min_component_ratio", config.mesh.min_component_ratio)),
+            remove_degenerate_faces=bool(m.get("remove_degenerate_faces", config.mesh.remove_degenerate_faces)),
+            remove_unreferenced_vertices=bool(m.get("remove_unreferenced_vertices", config.mesh.remove_unreferenced_vertices)),
+            remove_duplicate_faces=bool(m.get("remove_duplicate_faces", config.mesh.remove_duplicate_faces)),
+            unify_normals=bool(m.get("unify_normals", config.mesh.unify_normals)),
+            degenerate_area_threshold=float(m.get("degenerate_area_threshold", config.mesh.degenerate_area_threshold)),
         )
 
     if "scaling" in data and isinstance(data["scaling"], dict):

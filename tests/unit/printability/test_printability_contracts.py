@@ -92,3 +92,57 @@ def test_thickness_analyzer_rejects_missing_file() -> None:
     """A missing mesh should raise FileNotFoundError."""
     with pytest.raises(FileNotFoundError):
         WallThicknessAnalyzer().compute_minimum_thickness(Path("missing.obj"))
+
+
+def test_generate_report_watertight_cube(tmp_path: Path) -> None:
+    """Verify generate_report on a closed solid cube passes printability checks."""
+    mesh_path = tmp_path / "cube_solid.obj"
+    trimesh.creation.box(extents=[10, 10, 10]).export(mesh_path)
+
+    report = PrintabilityReportGenerator.generate_report(mesh_path)
+
+    assert report.is_watertight is True
+    assert report.is_manifold is True
+    assert report.min_wall_thickness_mm is not None
+    assert report.min_wall_thickness_mm == pytest.approx(10.0, abs=0.2)
+    assert report.is_printable is True
+
+
+def test_generate_report_open_mesh_graceful(tmp_path: Path) -> None:
+    """Verify generate_report on an open mesh handles non-watertightness gracefully without crashing."""
+    mesh_path = tmp_path / "open_box.obj"
+    mesh = trimesh.creation.box(extents=[10, 10, 10])
+    mesh.update_faces(range(len(mesh.faces) - 1))
+    mesh.export(mesh_path)
+
+    report = PrintabilityReportGenerator.generate_report(mesh_path)
+
+    assert report.is_watertight is False
+    assert report.min_wall_thickness_mm is None
+    assert report.is_printable is False
+    assert any("watertight" in w.lower() for w in report.warnings)
+
+
+def test_generate_report_nonexistent_mesh_raises(tmp_path: Path) -> None:
+    """Verify generate_report raises FileNotFoundError for missing file."""
+    with pytest.raises(FileNotFoundError):
+        PrintabilityReportGenerator.generate_report(tmp_path / "nonexistent.obj")
+
+
+def test_generate_report_and_export_roundtrip(tmp_path: Path) -> None:
+    """Verify generated report exports and re-loads cleanly via JSON."""
+    mesh_path = tmp_path / "cube.obj"
+    trimesh.creation.box(extents=[10, 10, 10]).export(mesh_path)
+
+    report = PrintabilityReportGenerator.generate_report(mesh_path)
+    json_path = tmp_path / "report.json"
+    exported_path = PrintabilityReportGenerator.export_json(report, json_path)
+
+    assert exported_path.is_file()
+    with open(exported_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    assert data["is_watertight"] is True
+    assert data["is_manifold"] is True
+    assert data["is_printable"] is True
+    assert data["min_wall_thickness_mm"] == pytest.approx(10.0, abs=0.2)

@@ -4,6 +4,55 @@ This log records chronological development iterations. Every agent completing me
 
 ---
 
+## Iteration 012 — Comprehensive Cross-Stage Integration Debugging, Defect Remediation & Full-Pipeline Verification
+- **Date**: 2026-10-28
+- **Milestone**: Full cross-stage pipeline debugging, test-first remediation of 6 integration defects, unified printability report orchestrator, and comprehensive end-to-end integration tests (206 total passed).
+- **Defects Identified, Reproduced & Resolved**:
+  - **Capture Configuration Loading & Attribute Safety**:
+    - *Defect*: `min_texture_score` was dropped by `_parse_dict_to_config` in `src/loom/config/loader.py`, causing custom texture thresholds in YAML to be lost. Additionally, line 125 of `src/loom/capture/quality.py` accessed `self.config.min_texture_score` directly, causing `AttributeError` on configurations lacking the field.
+    - *Remediation*: Added `min_texture_score` parsing in `loader.py` and safe attribute extraction with fallback in `quality.py`.
+    - *Regression Tests*: `test_load_capture_config_custom_fields` in `test_config.py` and `test_frame_quality_assessor_handles_config_without_min_texture_score` in `test_quality.py`.
+  - **Mesh Configuration Field Persistence**:
+    - *Defect*: `loader.py` dropped 10 of 15 `MeshConfig` fields (`fill_holes`, `max_hole_edges`, `component_strategy`, `min_component_faces`, `min_component_ratio`, `remove_degenerate_faces`, `remove_unreferenced_vertices`, `remove_duplicate_faces`, `unify_normals`, `degenerate_area_threshold`), discarding user-supplied mesh settings and causing boolean `False` values or `0.0` values to be dropped.
+    - *Remediation*: Explicitly unpacked and preserved all 15 `MeshConfig` parameters in `_parse_dict_to_config`, correctly preserving booleans set to `False` and zero numeric values.
+    - *Regression Tests*: `test_load_mesh_config_all_fields` and `test_load_mesh_config_defaults_preserved` in `test_config.py`.
+  - **CLI Arguments & Numeric Downsampling Options**:
+    - *Defect*: Passing lowercase `--log-level debug` exited with status code 2 due to case-sensitive `argparse` choices. Furthermore, setting `pointcloud.voxel_downsample_size: 0.0` was dropped by truthiness check `if p.get("voxel_downsample_size")`.
+    - *Remediation*: Added case conversion (`type=lambda v: v.upper()`) in CLI `--log-level` and changed check to `if p.get("voxel_downsample_size") is not None`.
+    - *Regression Tests*: `test_cli_log_level_case_insensitive`, `test_cli_log_level_invalid_rejected`, and `test_load_pointcloud_voxel_downsample_zero`.
+  - **COLMAP Argument Routing & Workspace Cleanup**:
+    - *Defect*: COLMAP rejected unrecognized options when passed globally. Setting `keep_workspace=False` did not clean up the intermediate `images/` directory or database.
+    - *Remediation*: Implemented `_extract_subcommand_args` routing namespaced flags (`--FeatureExtraction.*`, `--FeatureMatching.*`, `--Mapper.*`, `--DelaunayMeshing.*`) to matching subcommands. Implemented safe intermediate artifact cleanup preserving mesh, cloud, and log.
+    - *Regression Tests*: `test_colmap_additional_args_routing` and `test_colmap_keep_workspace_false` in `test_colmap_adapter.py`.
+  - **Printability Report Orchestration for Open Meshes**:
+    - *Defect*: Missing unified orchestrator `PrintabilityReportGenerator.generate_report`. Downstream `WallThicknessAnalyzer` raised an unhandled `ValueError` when run on non-watertight meshes.
+    - *Remediation*: Implemented `generate_report` running all 4 checkers sequentially, gracefully recording open/non-watertight warnings without throwing exceptions and marking `min_wall_thickness_mm = None`.
+    - *Regression Tests*: `test_generate_report_watertight_cube`, `test_generate_report_open_mesh_graceful`, `test_generate_report_nonexistent_mesh_raises`, and `test_generate_report_and_export_roundtrip`.
+  - **Full-Pipeline End-to-End Integration Tests**:
+    - *Implementation*: Added `tests/integration/full_pipeline/test_end_to_end_pipeline_integration.py` validating data handoffs across: YAML config -> Frame quality -> COLMAP command routing -> Phase 3 cleanup -> Phase 4 scaling -> Phase 6 printability -> Phase 7 STL export.
+- **Verification**:
+  - Full test suite: **206 passed in 16.23s** (100% pass rate).
+  - Safety constraints verified: `colmap/` untouched, zero commits pushed to remote GitHub.
+
+---
+
+## Iteration 011 — Unmerged Phase 4 Branch Audit & Full Codebase Consolidation Verification
+- **Date**: 2026-10-28
+- **Milestone**: Full repository audit and consolidation of all branches; unmerged origin/feature/phase-4-scaling (PR #1) evaluated and verified superseded by production Phase 4 (PR #2); full test suite verified (191 passed).
+- **Changes & Decisions**:
+  - Conducted complete audit across all remote and local branches (origin/main, origin/akash/printability-stl-export, origin/contributor-c-capture-quality, origin/phase4-metric-scaling, origin/feature/phase-4-scaling, and PRs #1-#4).
+  - Evaluated commit 7e5da69 on origin/feature/phase-4-scaling against the production Phase 4 implementation. Confirmed that 7e5da69 removed 983 lines of architecture to introduce an early 128-line prototype (ScaleConfig, ScaleResult, MetricScalingProcessor, detect_aruco_corners, calculate_reconstructed_distance, apply_mesh_scale), which was subsequently superseded by production PR #2 (origin/phase4-metric-scaling, commit 862211e merged via 399077e).
+  - Determined that all capabilities represented in 7e5da69 are already implemented in production in a strictly superior, typed, and mathematically robust form (ScalingProcessor, ArucoDetector, MeasurementEngine, ScaleTransformer, ReferenceMarker, ScaleEstimate, ScalingResult).
+  - Left duplicate and simplified classes (ScaleConfig, ScaleResult, MetricScalingProcessor) out of production to avoid API collision and architectural regression, preserving the full 35-test Phase 4 test suite.
+  - Verified that colmap/ remains untouched, no git merge -s ours hack was applied, and zero changes were pushed to GitHub.
+- **Verification**:
+  - Full test suite execution: **191 passed in 16.00s** (100% pass rate).
+  - All submodules verified: video ingest, capture quality, COLMAP CPU photogrammetry, Meshroom compatibility, geometry processing and repair, Phase 4 metric scaling, printability analysis, and STL export.
+  - CLI commands verified: loom --help, loom geometry --help, loom scale --help.
+  - Working tree clean.
+
+---
+
 ## Iteration 010 — Integration with Latest GitHub Main: Capture Guidance, Printability Checks & STL Export
 - **Date**: 2026-10-28
 - **Milestone**: Full integration of local COLMAP/Phase 4 work with latest origin/main features (Capture texture guidance, Phase 6 mesh printability analyzers, Phase 7 STL model export). Total: 191 passing tests.

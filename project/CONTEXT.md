@@ -3,8 +3,8 @@
 **Project**: LOOM / VIDEO2PRINT  
 **Objective**: Transition an ordinary smartphone video into a metrically scaled, validated, 3D printable object (.STL) with measurable manufacturing readiness.  
 **Last Updated**: 2026-10-28  
-**Current Iteration**: 010 (Integrated COLMAP CPU Photogrammetry, Capture Texture Guidance, Mesh Printability & STL Export)  
-**Current Milestone**: Phase 2 — Photogrammetry Reconstruction (VERIFIED on Windows Host via COLMAP 4.2.1); Phase 3 (VERIFIED); Phase 4 (IMPLEMENTED & SYNTHETICALLY VERIFIED); Phase 6 Printability (VERIFIED); Phase 7 STL Export (VERIFIED) with 191 total tests  
+**Current Iteration**: 012 (Comprehensive Cross-Stage Integration Debugging, Defect Remediation & Full-Pipeline Verification)  
+**Current Milestone**: Phase 2 — Photogrammetry Reconstruction (VERIFIED on Windows Host via COLMAP 4.2.1); Phase 3 (VERIFIED); Phase 4 (IMPLEMENTED & SYNTHETICALLY VERIFIED); Phase 6 Printability (VERIFIED); Phase 7 STL Export (VERIFIED) with 206 total tests  
 
 ---
 
@@ -12,10 +12,10 @@
 
 | Dimension | Status | Notes |
 | :--- | :--- | :--- |
-| **Codebase State** | Phase 1, 2 (COLMAP), 3, 4, 6 (Printability), 7 (STL Export) Integrated & Verified | Ingest, quality selection, COLMAP & Meshroom adapters, diagnostics, components, cleanup, repair, normalization, Phase 1 $\to$ 2 $\to$ 3 handoff, ArUco detection, measurement engine, scale estimator, transformer, scaling processor, and CLI working (191 passing tests). |
+| **Codebase State** | Full Pipeline Stages 1, 2 (COLMAP/Meshroom), 3, 4, 6 (Printability), 7 (STL Export) Integrated, Debugged & Verified | Ingest, quality selection, COLMAP & Meshroom adapters, diagnostics, components, cleanup, repair, normalization, Phase 1 $\to$ 2 $\to$ 3 handoff, ArUco detection, measurement engine, scale estimator, transformer, scaling processor, printability report generator, STL exporter, and CLI working (206 passing tests). |
 | **Python Target** | 3.10.11 | Installed and active in `.venv` (`.venv\Scripts\python`). |
-| **Dependencies** | Phase 1, 2, 3 & 4 Active | `numpy==2.2.6`, `opencv-python==5.0.0.93` (`cv2.aruco`), `pyyaml==6.0.3`, `tqdm==4.70.1`, `trimesh==5.1.0`, `scipy==1.15.3`, `pytest==9.1.1`. rtree==1.4.1 (mesh raycasting for wall thickness). Zero heavyweight AI dependencies. |
-| **Verified Components** | Ingest, Quality, COLMAP Adapter (CPU/Qt/Delaunay), Mesh Diagnostics, Cleanup, Repair, Normalization, Pipeline Handoff, ArUco Detection, Measurement Engine, Scale Estimator, Transformer, Scaling Processor, Zero-Frame Guard | 179 passing tests verifying photogrammetric mesh processing, component selection, degenerate removal, conservative hole repair, scale calculation, topology-preserving vertex transformation, failure discrimination, and CLI execution (`scale`, `geometry`, `reconstruct`). |
+| **Dependencies** | Minimal active dependencies | `numpy==2.2.6`, `opencv-python==5.0.0.93` (`cv2.aruco`), `pyyaml==6.0.3`, `tqdm==4.70.1`, `trimesh==5.1.0`, `scipy==1.15.3`, `pytest==9.2.0`, `rtree==1.4.1`. Zero heavyweight AI dependencies. |
+| **Verified Components** | Ingest, Quality, COLMAP Adapter (CPU/Qt/Delaunay), Mesh Diagnostics, Cleanup, Repair, Normalization, Pipeline Handoff, ArUco Detection, Measurement Engine, Scale Estimator, Transformer, Scaling Processor, Printability Orchestrator, STL Exporter, CLI Options | 206 passing tests verifying photogrammetric mesh processing, component selection, degenerate removal, conservative hole repair, scale calculation, topology-preserving vertex transformation, failure discrimination, non-watertight printability handling, and CLI execution (`scale`, `geometry`, `reconstruct`). |
 | **Active Blockers** | None | COLMAP 4.2.1 is installed at `C:\Tools\COLMAP` and verified functional for live photogrammetry on host Windows environment (`EXP-008`). |
 
 ---
@@ -26,14 +26,14 @@
 | :--- | :--- | :--- | :--- |
 | **0. Project Bootstrap & Scaffold** | `src/loom/`, `tests/` | **COMPLETE** | Yes (Core architecture, 65 tests passing) |
 | **1. Video Ingest & Decoding** | `src/loom/video/` | **COMPLETE** | Yes (Validation, metadata, streaming) |
-| **2. Frame Selection & Quality** | `src/loom/capture/` | **COMPLETE** | Yes (Sharpness, exposure, redundancy, guidance) |
+| **2. Frame Selection & Quality** | `src/loom/capture/` | **COMPLETE** | Yes (Sharpness, exposure, redundancy, guidance, texture check) |
 | **3. Reconstruction Adapter** | `src/loom/reconstruction/` | **VERIFIED** | Yes (COLMAP 4.2.1 verified live on host; Meshroom adapter contract verified) |
 | **4. Point Cloud Processing** | `src/loom/pointcloud/` | Scaffolded | Interfaces verified |
 | **5. Mesh Processing & Cleanup** | `src/loom/mesh/` | **VERIFIED** | Yes (Diagnostics, components, cleanup, conservative repair, normal unification, 49 tests passing) |
 | **6. Metric Scaling** | `src/loom/scaling/` | **IMPLEMENTED / SYNTHETICALLY VERIFIED** | Yes (ArUco detection, measurement engine, scale estimator, transformer, processor, CLI, 31 tests passing) |
 | **7. Geometry Validation** | `src/loom/validation/` | Scaffolded | Math verified (Phase 5 target) |
-| **8. Printability Analysis** | `src/loom/printability/` | Scaffolded | Reports verified (Phase 6 target) |
-| **9. Model Export** | `src/loom/export/` | Scaffolded | Manifests verified (Phase 7 target) |
+| **8. Printability Analysis** | `src/loom/printability/` | **VERIFIED** | Yes (Watertight, manifold, overhang, wall thickness, graceful report orchestration) |
+| **9. Model Export** | `src/loom/export/` | **VERIFIED** | Yes (Binary and ASCII STL export, bounds invariant) |
 
 ---
 
@@ -62,7 +62,8 @@
 - `scipy==1.15.3`: Active (spatial adjacency, graph components)
 - `pyyaml==6.0.3`: Active (configuration loading)
 - `tqdm==4.70.1`: Active (progress feedback)
-- `pytest==9.1.1`: Active (testing)
+- `rtree==1.4.1`: Active (mesh raycasting for wall thickness calculation)
+- `pytest==9.2.0`: Active (testing)
 
 ---
 

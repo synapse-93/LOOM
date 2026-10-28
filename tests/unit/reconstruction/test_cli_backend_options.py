@@ -67,3 +67,17 @@ def test_cli_supports_meshroom_path_backward_compatible_alias() -> None:
         cfg = mock_pipeline.call_args[1]["config"]
         assert cfg.reconstruction.backend == "meshroom"
         assert cfg.reconstruction.binary_path == Path("custom_meshroom.exe")
+
+
+def test_cli_log_level_case_insensitive() -> None:
+    with patch("loom.__main__.run_phase1_pipeline", return_value=_create_mock_artifacts()):
+        with patch("loom.__main__.setup_logging") as mock_setup_log:
+            code = main(["--video", "dummy.mp4", "--log-level", "debug"])
+            assert code == 0
+            mock_setup_log.assert_called_with(level="DEBUG")
+
+
+def test_cli_log_level_invalid_rejected(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["--log-level", "notareallevel"])
+    assert exc.value.code == 2

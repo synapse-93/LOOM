@@ -199,3 +199,23 @@ def test_low_texture_heuristic_detects_uniform_frame(tmp_path):
         "Low visible detail" in reason
         for reason in result.rejection_reasons
     )
+
+
+def test_frame_quality_assessor_handles_config_without_min_texture_score(tmp_path: Path) -> None:
+    """Verify assessor defaults gracefully when config lacks min_texture_score attribute."""
+    from types import SimpleNamespace
+    image = np.full((100, 100), 128, dtype=np.uint8)
+    frame_path = tmp_path / "uniform_legacy.png"
+    cv2.imwrite(str(frame_path), image)
+
+    legacy_cfg = SimpleNamespace(
+        sharpness_threshold=100.0,
+        min_brightness=30.0,
+        max_brightness=235.0,
+        min_contrast=15.0,
+        redundancy_threshold=0.98,
+    )
+    assessor = FrameQualityAssessor(legacy_cfg)  # type: ignore
+    result, _ = assessor.evaluate_frame(frame_path)
+    assert result.is_low_texture is True
+    assert any("Low visible detail" in r for r in result.rejection_reasons)

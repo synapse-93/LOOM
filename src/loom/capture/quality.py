@@ -93,9 +93,8 @@ class FrameQualityAssessor:
 
         # Heuristic indicator of visible local detail; not a reconstruction guarantee.
         texture_score = sharpness
-        is_low_texture = texture_score < getattr(
-            self.config, "min_texture_score", 10.0
-        )
+        min_texture_thresh = float(getattr(self.config, "min_texture_score", 10.0))
+        is_low_texture = texture_score < min_texture_thresh
 
         reasons: list[str] = []
 
@@ -122,7 +121,7 @@ class FrameQualityAssessor:
         if is_low_texture:
             reasons.append(
                 f"Low visible detail (heuristic score {texture_score:.1f} "
-                f"< threshold {self.config.min_texture_score:.1f})"
+                f"< threshold {min_texture_thresh:.1f})"
         )
 
         # Redundancy comparison using 64x64 normalized thumbnail

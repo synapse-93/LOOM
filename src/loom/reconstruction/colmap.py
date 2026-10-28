@@ -35,6 +35,45 @@ class ColmapAdapter(ReconstructionEngine):
 
     SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 
+    SUBCOMMAND_OPTION_PREFIXES = {
+        "feature_extractor": ("--FeatureExtraction.", "--ImageReader.", "--SiftExtraction."),
+        "exhaustive_matcher": ("--FeatureMatching.", "--ExhaustiveMatching.", "--SiftMatching."),
+        "mapper": ("--Mapper.", "--IncrementalMapper."),
+        "patch_match_stereo": ("--PatchMatchStereo."),
+        "stereo_fusion": ("--StereoFusion."),
+        "poisson_mesher": ("--PoissonMeshing."),
+        "delaunay_mesher": ("--DelaunayMeshing."),
+    }
+
+    @classmethod
+    def _extract_subcommand_args(cls, subcommand: str, additional_args: Sequence[str]) -> list[str]:
+        """Extract and forward only additional arguments matching the target COLMAP subcommand."""
+        if not additional_args:
+            return []
+        prefixes = cls.SUBCOMMAND_OPTION_PREFIXES.get(subcommand, ())
+        subcmd_prefix = f"--{subcommand}."
+        routed: list[str] = []
+        i = 0
+        n = len(additional_args)
+        while i < n:
+            token = str(additional_args[i])
+            if token.startswith("--"):
+                matches = False
+                matched_token = token
+                if token.startswith(subcmd_prefix):
+                    matches = True
+                    matched_token = "--" + token[len(subcmd_prefix):]
+                elif any(token.startswith(p) for p in prefixes):
+                    matches = True
+
+                if matches:
+                    routed.append(matched_token)
+                    if i + 1 < n and not str(additional_args[i + 1]).startswith("--"):
+                        i += 1
+                        routed.append(str(additional_args[i]))
+            i += 1
+        return routed
+
     def __init__(
         self,
         binary_path: str | Path = "colmap",
@@ -407,6 +446,7 @@ class ColmapAdapter(ReconstructionEngine):
         ]
         if not has_gpu:
             feature_cmd.extend(["--FeatureExtraction.use_gpu", "0"])
+        feature_cmd.extend(self._extract_subcommand_args("feature_extractor", config.additional_args))
 
         self._run_command(
             feature_cmd,
@@ -424,6 +464,7 @@ class ColmapAdapter(ReconstructionEngine):
         ]
         if not has_gpu:
             matcher_cmd.extend(["--FeatureMatching.use_gpu", "0"])
+        matcher_cmd.extend(self._extract_subcommand_args("exhaustive_matcher", config.additional_args))
 
         matcher_res = self._run_command(
             matcher_cmd,
@@ -448,6 +489,7 @@ class ColmapAdapter(ReconstructionEngine):
                 "--database_path", str(database_path),
                 "--FeatureMatching.use_gpu", "0",
             ]
+            cpu_matcher_cmd.extend(self._extract_subcommand_args("exhaustive_matcher", config.additional_args))
             cpu_res = self._run_command(
                 cpu_matcher_cmd,
                 cwd=workspace,
@@ -478,6 +520,7 @@ class ColmapAdapter(ReconstructionEngine):
             "--image_path", str(images_dir),
             "--output_path", str(sparse_dir),
         ]
+        mapper_cmd.extend(self._extract_subcommand_args("mapper", config.additional_args))
         self._run_command(
             mapper_cmd,
             cwd=workspace,
@@ -563,9 +606,11 @@ class ColmapAdapter(ReconstructionEngine):
                 env=env,
             )
             # Generate surface mesh via delaunay_mesher
+            dm_cmd = [str(binary), "delaunay_mesher", "--input_path", str(model_dir),
+                      "--input_type", "sparse", "--output_path", str(sparse_mesh_ply)]
+            dm_cmd.extend(self._extract_subcommand_args("delaunay_mesher", config.additional_args))
             self._run_command(
-                [str(binary), "delaunay_mesher", "--input_path", str(model_dir),
-                 "--input_type", "sparse", "--output_path", str(sparse_mesh_ply)],
+                dm_cmd,
                 cwd=workspace,
                 log_file=log_file,
                 timeout_seconds=remaining_timeout(),
@@ -600,6 +645,12 @@ class ColmapAdapter(ReconstructionEngine):
             if registered_cameras is not None and len(valid_frames) > 0
             else None
         )
+
+        if not config.keep_workspace:
+            if images_dir.is_dir():
+                shutil.rmtree(images_dir, ignore_errors=True)
+            if database_path.is_file():
+                database_path.unlink(missing_ok=True)
 
         return ReconstructionResult(
             success=True,

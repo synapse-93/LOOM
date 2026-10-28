@@ -420,3 +420,109 @@ def test_mapper_empty_model_dir_rejected(
     with patch("loom.reconstruction.colmap.subprocess.run", side_effect=fake_run):
         with pytest.raises(ReconstructionArtifactNotFoundError, match="without producing a sparse model"):
             adapter.reconstruct(frames, cfg)
+
+
+def test_colmap_additional_args_routing(
+    tmp_path: Path, frames: list[Path], executable: Path
+) -> None:
+    adapter = ColmapAdapter(executable, has_gpu_support=False)
+    workspace = tmp_path / "run"
+    cfg = ReconstructionJobConfig(
+        workspace_dir=workspace,
+        binary_path=executable,
+        additional_args=[
+            "--FeatureExtraction.max_num_features", "4096",
+            "--FeatureMatching.max_ratio", "0.7",
+            "--Mapper.min_num_matches", "15",
+            "--DelaunayMeshing.max_proj_dist", "20",
+        ],
+    )
+
+    recorded_commands: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        recorded_commands.append(command)
+        subcmd = command[1]
+        if subcmd == "exhaustive_matcher":
+            db = workspace / "database.db"
+            with sqlite3.connect(str(db)) as conn:
+                conn.execute("CREATE TABLE two_view_geometries (pair_id INTEGER, rows INTEGER)")
+                conn.execute("INSERT INTO two_view_geometries VALUES (1, 10)")
+                conn.commit()
+        elif subcmd == "mapper":
+            model = workspace / "sparse" / "0"
+            model.mkdir(parents=True, exist_ok=True)
+            (model / "cameras.bin").write_bytes(b"c")
+            (model / "images.bin").write_bytes(b"i")
+            (model / "points3D.bin").write_bytes(b"p")
+        elif subcmd == "model_converter":
+            (workspace / "sparse" / "points.ply").write_text("ply\nelement vertex 5\nend_header\n")
+        elif subcmd == "delaunay_mesher":
+            (workspace / "sparse" / "mesh.ply").write_text("ply\nelement vertex 3\nelement face 1\nend_header\n")
+        return subprocess.CompletedProcess(command, 0, stdout="Reconstruction with 3 images and 5 points", stderr="")
+
+    with patch("loom.reconstruction.colmap.subprocess.run", side_effect=fake_run):
+        res = adapter.reconstruct(frames, cfg)
+        assert res.success is True
+
+    fe_cmd = next(c for c in recorded_commands if c[1] == "feature_extractor")
+    fm_cmd = next(c for c in recorded_commands if c[1] == "exhaustive_matcher")
+    map_cmd = next(c for c in recorded_commands if c[1] == "mapper")
+    dm_cmd = next(c for c in recorded_commands if c[1] == "delaunay_mesher")
+
+    assert "--FeatureExtraction.max_num_features" in fe_cmd
+    assert "4096" in fe_cmd
+    assert "--Mapper.min_num_matches" not in fe_cmd
+
+    assert "--FeatureMatching.max_ratio" in fm_cmd
+    assert "0.7" in fm_cmd
+    assert "--FeatureExtraction.max_num_features" not in fm_cmd
+
+    assert "--Mapper.min_num_matches" in map_cmd
+    assert "15" in map_cmd
+    assert "--FeatureExtraction.max_num_features" not in map_cmd
+
+    assert "--DelaunayMeshing.max_proj_dist" in dm_cmd
+    assert "20" in dm_cmd
+
+
+def test_colmap_keep_workspace_false(
+    tmp_path: Path, frames: list[Path], executable: Path
+) -> None:
+    adapter = ColmapAdapter(executable, has_gpu_support=False)
+    workspace = tmp_path / "run"
+    cfg = ReconstructionJobConfig(
+        workspace_dir=workspace,
+        binary_path=executable,
+        keep_workspace=False,
+    )
+
+    def fake_run(command, **kwargs):
+        subcmd = command[1]
+        if subcmd == "exhaustive_matcher":
+            db = workspace / "database.db"
+            with sqlite3.connect(str(db)) as conn:
+                conn.execute("CREATE TABLE two_view_geometries (pair_id INTEGER, rows INTEGER)")
+                conn.execute("INSERT INTO two_view_geometries VALUES (1, 10)")
+                conn.commit()
+        elif subcmd == "mapper":
+            model = workspace / "sparse" / "0"
+            model.mkdir(parents=True, exist_ok=True)
+            (model / "cameras.bin").write_bytes(b"c")
+            (model / "images.bin").write_bytes(b"i")
+            (model / "points3D.bin").write_bytes(b"p")
+        elif subcmd == "model_converter":
+            (workspace / "sparse" / "points.ply").write_text("ply\nelement vertex 5\nend_header\n")
+        elif subcmd == "delaunay_mesher":
+            (workspace / "sparse" / "mesh.ply").write_text("ply\nelement vertex 3\nelement face 1\nend_header\n")
+        return subprocess.CompletedProcess(command, 0, stdout="Reconstruction with 3 images and 5 points", stderr="")
+
+    with patch("loom.reconstruction.colmap.subprocess.run", side_effect=fake_run):
+        res = adapter.reconstruct(frames, cfg)
+        assert res.success is True
+
+    assert not (workspace / "images").exists()
+    assert not (workspace / "database.db").exists()
+    assert res.mesh_path.is_file()
+    assert res.point_cloud_path.is_file()
+    assert res.log_path.is_file()
