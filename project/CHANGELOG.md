@@ -6,7 +6,7 @@ This log records chronological development iterations. Every agent completing me
 
 ## Iteration 009 — COLMAP Windows CPU Reconstruction Pipeline, Qt Plugin Resolution & Live End-to-End Verification
 - **Date**: 2026-10-28
-- **Milestone**: Phase 2 — COLMAP Photogrammetry Backend EMPIRICALLY VERIFIED on Windows Host; Phase 1 -> Phase 2 -> Phase 3 Live Handoff Verified (171 passing tests).
+- **Milestone**: Phase 2 — COLMAP Photogrammetry Backend EMPIRICALLY VERIFIED on Windows Host; Phase 1 -> Phase 2 -> Phase 3 Live Handoff Verified (179 passing tests).
 - **Changes Implemented**:
   - Extended COLMAP executable resolution to support direct executable paths, directories containing colmap.exe, and installation directories containing bin/colmap.exe without hardcoding machine-specific paths.
   - Implemented automatic Qt platform plugin discovery discovering relative plugins/platforms directory (containing qwindows.dll) and injecting QT_QPA_PLATFORM_PLUGIN_PATH into subprocess environment while preserving existing user environment variables.
@@ -16,9 +16,9 @@ This log records chronological development iterations. Every agent completing me
   - Added PLY mesh validation (_validate_ply_mesh) verifying non-empty vertex and face elements before declaring reconstruction success.
   - Implemented dense MVS capability checking (patch_match_stereo requires CUDA/HIP); preserved sparse point clouds and Delaunay meshes when dense is unavailable or fails, keeping sparse and dense artifact paths distinct in ReconstructionResult.
   - Implemented zero-selected-frames pre-flight check in src/loom/pipeline/runner.py, cleanly skipping external engine invocation, setting ReconstructionStatus.INVALID_INPUT, and providing actionable camera guidance when all frames fail quality filtering.
-  - Added comprehensive unit tests in tests/unit/reconstruction/test_colmap_adapter.py and tests/unit/pipeline/test_empty_input_reconstruction.py.
+  - Added comprehensive unit tests in tests/unit/reconstruction/test_colmap_adapter.py and tests/unit/reconstruction/test_cli_backend_options.py, and tests/unit/pipeline/test_empty_input_reconstruction.py.
 - **Verification**:
-  - Full test suite: **171 passed in 11.42s** (100% pass rate, zero regressions, zero warnings).
+  - Full test suite: **179 passed in 9.86s** (100% pass rate, zero regressions, zero warnings).
   - Live COLMAP run on smartphone footage (WhatsApp Video 2026-10-28 at 20.16.26.mp4): extracted 300 frames, selected 158 keyframes, matched 12,403 pairs on CPU, triangulated sparse cloud (118 points), generated Delaunay mesh (89 vertices, 158 faces) in 241.45s.
   - Live Phase 3 handoff: mesh processor diagnosed 1 boundary loop (18 edges), repaired with 16 triangles, produced watertight solid (89 vertices, 174 faces, watertight=True, Euler=2, volume=0.0031) saved to outputs/live-test/runs/.../geometry/cleaned_mesh.obj.
   - Live empty-input smoke test on blurry video (WIN_20261028_20_24_03_Pro.mp4): rejected all 300 frames for motion blur (sharpness 12.63), skipped reconstruction with status invalid_input in 0.00s and generated clear capture guidance.

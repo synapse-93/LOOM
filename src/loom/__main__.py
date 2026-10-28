@@ -410,11 +410,13 @@ def main(argv: list[str] | None = None) -> int:
             reg_ratio = f"{recon.registration_ratio:.1%}" if recon.registration_ratio is not None else "N/A"
             print(f"Registration Ratio:     {reg_ratio}")
             sparse_name = recon.sparse_reconstruction_path.name if recon.sparse_reconstruction_path else "None"
-            print(f"Sparse SFM Cloud:       {sparse_name}")
+            print(f"Sparse SFM Model:       {sparse_name}")
+            sparse_cloud = recon.point_cloud_path.name if recon.point_cloud_path else "None"
+            print(f"Point Cloud:            {sparse_cloud}")
             dense_name = (
                 recon.dense_point_cloud_path.name
                 if recon.dense_point_cloud_path
-                else (recon.point_cloud_path.name if recon.point_cloud_path else "None")
+                else "None (Sparse Pipeline)"
             )
             print(f"Dense Point Cloud:      {dense_name}")
             print(f"Mesh Output:            {recon.mesh_path if recon.mesh_path else 'None'}")
