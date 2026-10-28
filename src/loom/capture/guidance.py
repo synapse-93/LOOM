@@ -45,6 +45,10 @@ class CaptureGuidance:
             recommendations.append("Low frame diversity detected. Ensure a continuous orbital trajectory around the target.")
 
         if not recommendations:
-            recommendations.append("Capture quality is acceptable. Frame sequence is ready for 3D reconstruction.")
+            recommendations.append(
+                                 "No major issues detected by the current capture checks. "
+                                 "This assessment does not guarantee successful 3D reconstruction; "
+                                 "review viewpoint coverage and reconstruction results."
+                                 )
 
         return recommendations

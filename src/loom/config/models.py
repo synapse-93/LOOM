@@ -30,6 +30,7 @@ class CaptureConfig:
     min_brightness: float = 30.0
     max_brightness: float = 235.0
     min_contrast: float = 15.0
+    min_texture_score: float = 10.0
     redundancy_threshold: float = 0.98
 
 

@@ -48,3 +48,30 @@ def test_coverage_estimator_interface(tmp_path: Path) -> None:
     estimator = CoverageEstimator()
     score = estimator.estimate_coverage([f1, f2])
     assert 0.0 <= score <= 1.0
+def test_coverage_estimator_identical_frames_score_lower(
+    tmp_path: Path,
+) -> None:
+    """Identical frames should score lower than visually different frames."""
+    import cv2
+    import numpy as np
+
+    identical = np.full((64, 64, 3), 100, dtype=np.uint8)
+    different = np.full((64, 64, 3), 200, dtype=np.uint8)
+
+    paths = []
+    for name, image in [
+        ("same1.jpg", identical),
+        ("same2.jpg", identical),
+        ("different.jpg", different),
+    ]:
+        path = tmp_path / name
+        assert cv2.imwrite(str(path), image)
+        paths.append(path)
+
+    estimator = CoverageEstimator()
+
+    identical_score = estimator.estimate_coverage(paths[:2])
+    different_score = estimator.estimate_coverage([paths[0], paths[2]])
+
+    assert identical_score == 0.0
+    assert different_score > identical_score
