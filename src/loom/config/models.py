@@ -32,6 +32,28 @@ class CaptureConfig:
     min_contrast: float = 15.0
     min_texture_score: float = 10.0
     redundancy_threshold: float = 0.98
+    selection_mode: str = "default"  # Options: 'default', 'reconstruction_aware'
+    target_selected_frames: int = 30
+    min_inlier_matches: int = 15
+    max_homography_inlier_ratio: float = 0.85
+    temporal_window_size: int = 3
+    enable_geometric_verification: bool = True
+
+    def __post_init__(self) -> None:
+        if self.selection_mode not in {"default", "reconstruction_aware"}:
+            raise ValueError(
+                f"Invalid selection_mode '{self.selection_mode}'. Expected 'default' or 'reconstruction_aware'."
+            )
+        if self.target_selected_frames <= 0:
+            raise ValueError("target_selected_frames must be positive.")
+        if self.min_inlier_matches <= 0:
+            raise ValueError("min_inlier_matches must be positive.")
+        if not (0.0 <= self.max_homography_inlier_ratio <= 1.0):
+            raise ValueError("max_homography_inlier_ratio must be between 0.0 and 1.0.")
+        if self.temporal_window_size <= 0:
+            raise ValueError("temporal_window_size must be positive.")
+        if self.sharpness_threshold < 0:
+            raise ValueError("sharpness_threshold cannot be negative.")
 
 
 @dataclass

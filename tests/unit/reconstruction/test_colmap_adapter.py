@@ -526,3 +526,103 @@ def test_colmap_keep_workspace_false(
     assert res.mesh_path.is_file()
     assert res.point_cloud_path.is_file()
     assert res.log_path.is_file()
+
+
+def test_select_best_model_prefers_larger_model(tmp_path: Path, executable: Path) -> None:
+    adapter = ColmapAdapter(executable, has_gpu_support=False)
+    workspace = tmp_path / "run"
+    frames = [tmp_path / f"frame_{i}.jpg" for i in range(10)]
+    for f in frames:
+        f.write_bytes(b"dummy")
+
+    cfg = ReconstructionJobConfig(workspace_dir=workspace, binary_path=executable)
+
+    def fake_run(command, **kwargs):
+        subcmd = command[1]
+        if subcmd == "mapper":
+            # Model 0: small preliminary model with 2 images
+            m0 = workspace / "sparse" / "0"
+            m0.mkdir(parents=True, exist_ok=True)
+            (m0 / "cameras.bin").write_bytes(b"cam")
+            (m0 / "images.bin").write_bytes(b"\x02\x00\x00\x00\x00\x00\x00\x00")
+            (m0 / "points3D.bin").write_bytes(b"\x0a\x00\x00\x00\x00\x00\x00\x00")
+
+            # Model 1: primary model with 8 images and 150 points
+            m1 = workspace / "sparse" / "1"
+            m1.mkdir(parents=True, exist_ok=True)
+            (m1 / "cameras.bin").write_bytes(b"cam")
+            (m1 / "images.bin").write_bytes(b"\x08\x00\x00\x00\x00\x00\x00\x00")
+            (m1 / "points3D.bin").write_bytes(b"\x96\x00\x00\x00\x00\x00\x00\x00")
+        elif subcmd == "model_converter":
+            (workspace / "sparse" / "points.ply").write_text("ply\nelement vertex 150\nend_header\n")
+        elif subcmd == "delaunay_mesher":
+            (workspace / "sparse" / "mesh.ply").write_text("ply\nelement vertex 50\nelement face 80\nend_header\n")
+        return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+
+    with patch("loom.reconstruction.colmap.subprocess.run", side_effect=fake_run):
+        res = adapter.reconstruct(frames, cfg)
+
+    assert res.success is True
+    assert res.sparse_reconstruction_path == (workspace / "sparse" / "1").resolve()
+    assert res.registered_cameras_count == 8
+    assert res.point_count == 150
+    assert res.status == ReconstructionStatus.SUCCESS
+
+
+def test_fragmented_reconstruction_marked_partial(tmp_path: Path, executable: Path) -> None:
+    adapter = ColmapAdapter(executable, has_gpu_support=False)
+    workspace = tmp_path / "run"
+    frames = [tmp_path / f"frame_{i}.jpg" for i in range(20)]
+    for f in frames:
+        f.write_bytes(b"dummy")
+
+    cfg = ReconstructionJobConfig(workspace_dir=workspace, binary_path=executable)
+
+    def fake_run(command, **kwargs):
+        subcmd = command[1]
+        if subcmd == "mapper":
+            # Only 4 of 20 images registered (20% < 35% threshold)
+            m0 = workspace / "sparse" / "0"
+            m0.mkdir(parents=True, exist_ok=True)
+            (m0 / "cameras.bin").write_bytes(b"cam")
+            (m0 / "images.bin").write_bytes(b"\x04\x00\x00\x00\x00\x00\x00\x00")
+            (m0 / "points3D.bin").write_bytes(b"\x32\x00\x00\x00\x00\x00\x00\x00")
+        elif subcmd == "model_converter":
+            (workspace / "sparse" / "points.ply").write_text("ply\nelement vertex 50\nend_header\n")
+        elif subcmd == "delaunay_mesher":
+            (workspace / "sparse" / "mesh.ply").write_text("ply\nelement vertex 20\nelement face 30\nend_header\n")
+        return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+
+    with patch("loom.reconstruction.colmap.subprocess.run", side_effect=fake_run):
+        res = adapter.reconstruct(frames, cfg)
+
+    assert res.success is True
+    assert res.status == ReconstructionStatus.PARTIAL
+    assert res.registered_cameras_count == 4
+    assert res.registration_ratio == 0.2
+    assert "fragmented" in (res.error_message or "").lower()
+
+
+def test_insufficient_registered_cameras_raises_error(tmp_path: Path, executable: Path) -> None:
+    adapter = ColmapAdapter(executable, has_gpu_support=False)
+    workspace = tmp_path / "run"
+    frames = [tmp_path / f"frame_{i}.jpg" for i in range(5)]
+    for f in frames:
+        f.write_bytes(b"dummy")
+
+    cfg = ReconstructionJobConfig(workspace_dir=workspace, binary_path=executable)
+
+    def fake_run(command, **kwargs):
+        subcmd = command[1]
+        if subcmd == "mapper":
+            # Only 2 registered cameras (insufficient for 3D SfM)
+            m0 = workspace / "sparse" / "0"
+            m0.mkdir(parents=True, exist_ok=True)
+            (m0 / "cameras.bin").write_bytes(b"cam")
+            (m0 / "images.bin").write_bytes(b"\x02\x00\x00\x00\x00\x00\x00\x00")
+            (m0 / "points3D.bin").write_bytes(b"\x0a\x00\x00\x00\x00\x00\x00\x00")
+        return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+
+    with patch("loom.reconstruction.colmap.subprocess.run", side_effect=fake_run):
+        with pytest.raises(ReconstructionExecutionError, match="insufficient"):
+            adapter.reconstruct(frames, cfg)

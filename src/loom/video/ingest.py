@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-from loom.pipeline.artifacts import VideoArtifact
 from loom.video.metadata import VideoMetadata, extract_video_metadata
+
+if TYPE_CHECKING:
+    from loom.pipeline.artifacts import VideoArtifact
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +65,8 @@ class VideoIngestor:
             FileNotFoundError: If video does not exist.
             ValueError: If video is invalid or fails resolution thresholds.
         """
+        from loom.pipeline.artifacts import VideoArtifact
+
         self.validate_video_file(video_path)
         metadata: VideoMetadata = extract_video_metadata(video_path)
 

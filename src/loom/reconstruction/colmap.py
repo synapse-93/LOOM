@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import sqlite3
+import struct
 import subprocess
 import time
 from pathlib import Path
@@ -289,6 +290,51 @@ class ColmapAdapter(ReconstructionEngine):
             return 0
 
     @staticmethod
+    def _get_model_stats(model_dir: Path) -> tuple[int, int]:
+        """Return (num_registered_images, num_points) for a sparse model directory.
+
+        Supports COLMAP binary models (.bin) and text models (.txt), with safe fallback
+        for mock files or partial models.
+        """
+        if not model_dir.is_dir():
+            return 0, 0
+
+        num_images = 0
+        num_points = 0
+
+        img_bin = model_dir / "images.bin"
+        pts_bin = model_dir / "points3D.bin"
+
+        if img_bin.is_file() and img_bin.stat().st_size >= 8:
+            try:
+                with open(img_bin, "rb") as f:
+                    num_images = struct.unpack("<Q", f.read(8))[0]
+            except Exception:
+                num_images = 0
+        elif (model_dir / "images.txt").is_file():
+            try:
+                with open(model_dir / "images.txt", "r", errors="ignore") as f:
+                    lines = [l for l in f if l.strip() and not l.startswith("#")]
+                    num_images = len(lines) // 2
+            except Exception:
+                num_images = 0
+
+        if pts_bin.is_file() and pts_bin.stat().st_size >= 8:
+            try:
+                with open(pts_bin, "rb") as f:
+                    num_points = struct.unpack("<Q", f.read(8))[0]
+            except Exception:
+                num_points = 0
+        elif (model_dir / "points3D.txt").is_file():
+            try:
+                with open(model_dir / "points3D.txt", "r", errors="ignore") as f:
+                    num_points = sum(1 for l in f if l.strip() and not l.startswith("#"))
+            except Exception:
+                num_points = 0
+
+        return num_images, num_points
+
+    @staticmethod
     def _has_matcher_fatal_error(output: str) -> bool:
         """Detect fatal errors in matcher output that may exit with return code 0."""
         patterns = (
@@ -530,24 +576,48 @@ class ColmapAdapter(ReconstructionEngine):
             env=env,
         )
 
-        model_dir = sparse_dir / "0"
-        if not (model_dir.is_dir() and (any(model_dir.glob("*.bin")) or any(model_dir.glob("*.txt")))):
-            models = sorted(p for p in sparse_dir.iterdir() if p.is_dir())
-            valid_models = [p for p in models if any(p.glob("*.bin")) or any(p.glob("*.txt"))]
-            if not valid_models:
-                raise ReconstructionArtifactNotFoundError(
-                    "COLMAP mapper completed without producing a sparse model. Check the log for camera registration failures."
-                )
-            model_dir = max(valid_models, key=lambda p: sum(1 for _ in p.glob("*.*")))
+        valid_models = [
+            p for p in sorted(sparse_dir.iterdir())
+            if p.is_dir() and (any(p.glob("*.bin")) or any(p.glob("*.txt")))
+        ]
+        if not valid_models:
+            raise ReconstructionArtifactNotFoundError(
+                "COLMAP mapper completed without producing a sparse model. Check the log for camera registration failures."
+            )
 
-        # Check registered images and point count from mapper log
+        # Select the best model by registered cameras, then 3D points, then total files
+        model_dir = max(
+            valid_models,
+            key=lambda m: (*self._get_model_stats(m), sum(1 for _ in m.glob("*.*"))),
+        )
+        stat_images, stat_points = self._get_model_stats(model_dir)
+        logger.info(
+            "COLMAP produced %d sparse model(s) in %s. Selected primary model '%s' "
+            "(registered_images=%d, sparse_points=%d).",
+            len(valid_models),
+            sparse_dir,
+            model_dir.name,
+            stat_images,
+            stat_points,
+        )
+
+        # Check registered images and point count from selected model, then mapper log
         log_text = "".join(log_chunks)
-        registered_cameras: int | None = None
-        reconstructed_points: int | None = None
-        recon_match = re.search(r"Reconstruction with (\d+) images and (\d+) points", log_text)
-        if recon_match:
-            registered_cameras = int(recon_match.group(1))
-            reconstructed_points = int(recon_match.group(2))
+        registered_cameras: int | None = stat_images if stat_images > 0 else None
+        reconstructed_points: int | None = stat_points if stat_points > 0 else None
+
+        if registered_cameras is None:
+            recon_match = re.search(r"Reconstruction with (\d+) images and (\d+) points", log_text)
+            if recon_match:
+                registered_cameras = int(recon_match.group(1))
+                if reconstructed_points is None:
+                    reconstructed_points = int(recon_match.group(2))
+
+        if registered_cameras is not None and registered_cameras < 3:
+            raise ReconstructionExecutionError(
+                f"COLMAP reconstruction failed: only {registered_cameras} camera(s) registered, "
+                "which is insufficient to reconstruct 3D surface geometry."
+            )
 
         # Stage 4: Dense MVS Path (if can_run_dense is True) vs Sparse CPU Fallback
         dense_ply = dense_dir / "fused.ply"
@@ -608,7 +678,10 @@ class ColmapAdapter(ReconstructionEngine):
             # Generate surface mesh via delaunay_mesher
             dm_cmd = [str(binary), "delaunay_mesher", "--input_path", str(model_dir),
                       "--input_type", "sparse", "--output_path", str(sparse_mesh_ply)]
-            dm_cmd.extend(self._extract_subcommand_args("delaunay_mesher", config.additional_args))
+            dm_user_args = self._extract_subcommand_args("delaunay_mesher", config.additional_args)
+            if not any("--DelaunayMeshing.max_side_length_factor" in arg for arg in dm_user_args):
+                dm_cmd.extend(["--DelaunayMeshing.max_side_length_factor", "10"])
+            dm_cmd.extend(dm_user_args)
             self._run_command(
                 dm_cmd,
                 cwd=workspace,
@@ -646,6 +719,23 @@ class ColmapAdapter(ReconstructionEngine):
             else None
         )
 
+        quality_warnings: list[str] = []
+        is_fragmented = False
+
+        if registered_cameras is not None:
+            if len(valid_frames) >= 10 and (reg_ratio is not None and reg_ratio < 0.35):
+                is_fragmented = True
+                quality_warnings.append(
+                    f"Reconstruction is fragmented: only {registered_cameras}/{len(valid_frames)} "
+                    f"images registered ({reg_ratio*100:.1f}% coverage)."
+                )
+
+        if not dense_succeeded:
+            if dense_error_msg is not None or is_fragmented:
+                status = ReconstructionStatus.PARTIAL
+            else:
+                status = ReconstructionStatus.SUCCESS
+
         if not config.keep_workspace:
             if images_dir.is_dir():
                 shutil.rmtree(images_dir, ignore_errors=True)
@@ -669,5 +759,9 @@ class ColmapAdapter(ReconstructionEngine):
             output_dir=out_dir,
             log_path=log_file,
             log_output="".join(log_chunks),
-            error_message=f"Dense MVS fallback: {dense_error_msg}" if dense_error_msg else None,
+            error_message=(
+                f"Dense MVS fallback: {dense_error_msg}; {'; '.join(quality_warnings)}"
+                if (dense_error_msg and quality_warnings)
+                else (f"Dense MVS fallback: {dense_error_msg}" if dense_error_msg else ("; ".join(quality_warnings) if quality_warnings else None))
+            ),
         )

@@ -4,6 +4,65 @@ This log records chronological development iterations. Every agent completing me
 
 ---
 
+## Iteration 015 — Multi-Model SfM Selection, Delaunay Spike Elimination & Dense Sampling Evaluation
+- **Date**: 2026-10-29
+- **Milestone**: Remediation of single-model SfM selection defect in multi-component COLMAP reconstructions, elimination of Delaunay meshing edge spikes via side-length regularization, empirical evaluation of dense frame sampling (120 candidate frames), and photogrammetric adequacy validation (223 total tests passed).
+- **Defects Identified, Reproduced & Resolved**:
+  - **Single-Model SfM Selection Defect in Multi-Component COLMAP Reconstructions**:
+    - *Defect*: When incremental mapping produces multiple disjoint sparse reconstructions (`sparse/0`, `sparse/1`, `sparse/2`, ...), `ColmapAdapter.reconstruct` unconditionally defaulted to `sparse/0`. On the 120-frame test video run, `sparse/0` was a discarded preliminary 5-camera fragment (209 points), while `sparse/1` contained the primary reconstruction with 21–24 registered cameras, 874–983 points, and 3.80 mean track length.
+    - *Remediation*: Implemented `_get_model_stats()` in `src/loom/reconstruction/colmap.py` to inspect binary (`images.bin`, `points3D.bin`) or text (`images.txt`, `points3D.txt`) model metadata. Replaced unconditional `sparse/0` binding with dynamic selection maximizing `(registered_images, points_count, file_count)`.
+    - *Regression Tests*: Added `test_select_best_model_prefers_larger_model` in `tests/unit/reconstruction/test_colmap_adapter.py`.
+  - **Delaunay Meshing Outlier Spikes on Sparse Point Clouds**:
+    - *Defect*: On sparse SfM models with isolated background points, COLMAP's default `--DelaunayMeshing.max_side_length_factor 25` allowed massive edges up to 24.7m connecting foreground and outlier points, creating large spiky triangles stretching the bounding box extent to 28.8m.
+    - *Remediation*: Configured `--DelaunayMeshing.max_side_length_factor 10` by default in `ColmapAdapter.reconstruct()`, suppressing wild outlier edges and constraining mesh extents to the tight scene volume (8.63m x 11.14m x 3.68m) while preserving fine object geometry.
+  - **Reconstruction Adequacy & Failure Discrimination (Step 3)**:
+    - *Defect*: Prior implementation treated any non-empty PLY file as unconditional `ReconstructionStatus.SUCCESS`, even when registration ratio was 20% or point counts were too sparse to faithfully represent surface topology.
+    - *Remediation*: Added validation in `ColmapAdapter.reconstruct()`: enforces `registered_cameras >= 3` (raising `ReconstructionExecutionError` otherwise), discriminates fragmented reconstructions (< 35% registration coverage on >= 10 frames) by assigning `ReconstructionStatus.PARTIAL`, and packages informative diagnostics in `error_message`.
+    - *Regression Tests*: Added `test_fragmented_reconstruction_marked_partial` and `test_insufficient_registered_cameras_raises_error` in `test_colmap_adapter.py`.
+- **Verification**:
+    - Full test suite: **223 passed in 10.76s** (100% pass rate).
+    - Empirical validation on mouse video (`video_20261029_152036.mp4`):
+      - Registered cameras increased from **6** (baseline) to **21** (+250%).
+      - Reconstructed 3D points increased from **184** (baseline) to **874** (+375%).
+      - Surface mesh faces increased from **120** (baseline) to **914** (+661%).
+      - Median edge length decreased from **0.690** to **0.210** (-69.6% tighter).
+
+---
+
+## Iteration 014 — Reconstruction-Aware Frame Selection & Optical Connectivity
+- **Date**: 2026-10-29
+- **Milestone**: Implementation of opt-in reconstruction-aware frame selection (`selection_mode = "reconstruction_aware"`), multi-factor optical analysis, pairwise geometric verification ($F$ vs $H$ with RANSAC) across sliding temporal window ($K=3$), bridge frame prioritization, redundancy suppression, and Windows test fixture stabilization (220 total tests passed).
+- **Defects Identified, Reproduced & Resolved**:
+  - **Single Hard Cutoff & Match-Graph Disconnection Under Quality Filter**:
+    - *Defect*: When processing smartphone video `video_20261029_152036.mp4` (63.22s, 3,778 frames), the default quality filter evaluated frames with a hard sharpness cutoff (`sharpness < 80.0`), rejecting 43 of 60 frames and clustering 14 frames in $t=16$s–$32$s with a 24-second tracking void before 3 frames at $t=56$s–$59$s. The resulting COLMAP match graph contained 4 disconnected components and homography-dominated pairs ($H/F > 0.95$), causing bundle adjustment to fail with `Discarding reconstruction due to bad initial pair`.
+    - *Remediation*: Implemented `ReconstructionAwareSelector` in `src/loom/capture/reconstruction_aware.py`. It partitions candidate frames into uniform temporal sectors ensuring full duration coverage, evaluates multi-factor optical utility (sharpness, contrast, exposure, keypoint density, grid distribution), computes Fundamental matrix $F$ vs Homography $H$ RANSAC inliers across a local sliding window ($K=3$), discriminates planar/rotational degeneracy ($H/F \ge 0.85$), prioritizes bridge frames linking disconnected graph components, and suppresses visually redundant frames. Configurable via `CaptureConfig` fields (`selection_mode`, `target_selected_frames`, `min_inlier_matches`, `max_homography_inlier_ratio`, `temporal_window_size`, `enable_geometric_verification`). 100% backward compatibility preserved for `selection_mode = "default"`.
+    - *Regression Tests*: Added 10 comprehensive tests in `tests/unit/capture/test_reconstruction_aware.py` covering full timeline coverage, avoidance of clustering, homography degeneracy detection, bridge frame prioritization, visual redundancy suppression, graceful fallback for disabled/missing geometric data, defective frame rejection with explicit reasons, deterministic selection, default mode backward compatibility, and configuration validation.
+  - **Python Garbage Collection Crash on Windows from OpenCV C++ Subclassing**:
+    - *Defect*: `test_frame_extraction_handles_unknown_frame_count` subclassed `cv2.VideoCapture` in Python. Because `cv2.VideoCapture` is a C extension type without a Python-friendly subclassable layout, Python's GC crashed during teardown with an unraisable exception access violation in `gc_collect_harder`.
+    - *Remediation*: Refactored test fixture to use composition (`VideoCaptureWrapper`) delegating to `self._real` rather than subclassing the OpenCV C type, completely resolving the Windows GC access violation.
+- **Verification**:
+    - Unit & integration test suite: **220 passed in 8.25s** (100% pass rate).
+    - Preserved existing functionality: default mode filtering behaves identically to prior iterations.
+
+---
+
+## Iteration 013 — Full-Duration Capped Frame Sampling & Circular Import Remediation
+- **Date**: 2026-10-29
+- **Milestone**: Remediation of frame extraction premature truncation under max_frames cap, elimination of circular import between loom.video and loom.pipeline, and full duration coverage verification (210 total tests passed).
+- **Defects Identified, Reproduced & Resolved**:
+  - **Full-Duration Frame Sampling Under max_frames Limit**:
+    - *Defect*: When max_frames capped frame extraction (e.g. 60 frames on a 63.22s, 3,778-frame 60fps video with target_fps 15 / step 4), FrameExtractor stopped immediately upon writing frame 236 (t = 3.95s), ignoring the remaining 59.27s (93.75%) of the video. Sharp orbital viewpoints later in the video were never evaluated.
+    - *Remediation*: In src/loom/video/frames.py, when source_frame_count > 0 and max_frames > 0 and total nominal samples exceed max_frames, the sampling interval step dynamically expands to max(step, source_frame_count // max_frames). This guarantees exactly max_frames samples distributed uniformly across the entire video duration up to the final seconds.
+    - *Regression Tests*: Added test_frame_extraction_spans_entire_video_when_capped, test_frame_extraction_preserves_target_fps_when_under_max_frames, test_frame_extraction_adjusts_step_when_target_fps_exceeds_max_frames, and test_frame_extraction_handles_unknown_frame_count in tests/unit/video/test_frames.py.
+  - **Module-Level Circular Import in Video Package**:
+    - *Defect*: Importing loom.video.frames or loom.video.ingest directly triggered from loom.pipeline.artifacts import FrameSetArtifact / VideoArtifact, which executed loom/pipeline/__init__.py -> runner.py -> stages.py -> from loom.video.frames import FrameExtractor, failing with an ImportError on partially initialized module.
+    - *Remediation*: Shifted FrameSetArtifact and VideoArtifact imports behind TYPE_CHECKING at module level and imported locally inside extract() and ingest() methods, completely decoupling loom.video initialization from loom.pipeline.
+- **Verification**:
+    - Unit & integration test suite: **210 passed in 7.93s** (100% pass rate).
+    - Empirical validation on real smartphone video (video_20261029_152036.mp4): extracted exactly 60 frames spanning from t = 0.0s to t = 61.21s (96.82% duration coverage, effective step = 62), compared to prior 3.95s (6.25% coverage).
+
+---
+
 ## Iteration 012 — Comprehensive Cross-Stage Integration Debugging, Defect Remediation & Full-Pipeline Verification
 - **Date**: 2026-10-28
 - **Milestone**: Full cross-stage pipeline debugging, test-first remediation of 6 integration defects, unified printability report orchestrator, and comprehensive end-to-end integration tests (206 total passed).

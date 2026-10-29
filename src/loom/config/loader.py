@@ -55,6 +55,12 @@ def _parse_dict_to_config(data: dict[str, Any]) -> LoomConfig:
             min_contrast=float(c.get("min_contrast", config.capture.min_contrast)),
             min_texture_score=float(c.get("min_texture_score", config.capture.min_texture_score)),
             redundancy_threshold=float(c.get("redundancy_threshold", config.capture.redundancy_threshold)),
+            selection_mode=str(c.get("selection_mode", config.capture.selection_mode)),
+            target_selected_frames=int(c.get("target_selected_frames", config.capture.target_selected_frames)),
+            min_inlier_matches=int(c.get("min_inlier_matches", config.capture.min_inlier_matches)),
+            max_homography_inlier_ratio=float(c.get("max_homography_inlier_ratio", config.capture.max_homography_inlier_ratio)),
+            temporal_window_size=int(c.get("temporal_window_size", config.capture.temporal_window_size)),
+            enable_geometric_verification=bool(c.get("enable_geometric_verification", config.capture.enable_geometric_verification)),
         )
 
     if "reconstruction" in data and isinstance(data["reconstruction"], dict):

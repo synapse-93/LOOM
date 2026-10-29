@@ -1,0 +1,51 @@
+# LOOM Experiment Configuration: Dense Frame Sampling (120 frames)
+name: "experiment_dense_120"
+input_video: null
+output_dir: "outputs/dev"
+
+video:
+  sample_interval: 2
+  max_frames: 120
+  target_fps: 15.0
+  min_resolution_width: 1280
+  min_resolution_height: 720
+
+capture:
+  selection_mode: "reconstruction_aware"
+  sharpness_threshold: 80.0
+  max_blur_ratio: 0.4
+  min_overlap_ratio: 0.5
+  enable_coverage_estimation: true
+  target_selected_frames: 60
+  min_inlier_matches: 15
+  max_homography_inlier_ratio: 0.85
+  temporal_window_size: 3
+  enable_geometric_verification: true
+
+reconstruction:
+  backend: "colmap"
+  binary_path: "C:\\Users\\adise\\Downloads\\colmap-x64-windows-nocuda\\bin\\colmap.exe"
+  quality: "low"
+  timeout_seconds: 600
+  workspace_dir: "outputs/dev/reconstruction"
+  keep_workspace: true
+
+pointcloud:
+  clean_outliers: true
+  nb_neighbors: 16
+  std_ratio: 2.0
+  voxel_downsample_size: 2.0
+
+mesh:
+  clean_outliers: true
+  close_holes: true
+  max_hole_size: 20
+  poisson_depth: 7
+  target_face_count: 20000
+
+scaling:
+  strategy: "aruco"
+  marker_id: 0
+  marker_size_mm: 50.0
+  dictionary: "DICT_4X4_50"
+

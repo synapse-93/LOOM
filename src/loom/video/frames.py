@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 import cv2
 
 from loom.config.models import VideoConfig
-from loom.pipeline.artifacts import FrameSetArtifact
 from loom.utils.paths import ensure_directory
+
+if TYPE_CHECKING:
+    from loom.pipeline.artifacts import FrameSetArtifact
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +43,8 @@ class FrameExtractor:
             ValueError: If video cannot be decoded or produces 0 frames.
             RuntimeError: If frame writing fails.
         """
+        from loom.pipeline.artifacts import FrameSetArtifact
+
         src = Path(video_path).resolve()
         if not src.is_file():
             raise FileNotFoundError(f"Source video not found for extraction: {src}")
@@ -66,6 +70,11 @@ class FrameExtractor:
                     step = max(1, int(round(fps / self.config.target_fps)))
 
             max_frames = self.config.max_frames
+            if source_frame_count > 0 and max_frames > 0:
+                total_nominal_samples = (source_frame_count + step - 1) // step
+                if total_nominal_samples > max_frames:
+                    step = max(step, max(1, source_frame_count // max_frames))
+
             jpeg_quality = getattr(self.config, "jpeg_quality", 95)
             encode_params = [cv2.IMWRITE_JPEG_QUALITY, max(1, min(100, jpeg_quality))]
 
@@ -108,7 +117,7 @@ class FrameExtractor:
                         }
                     )
 
-                    if len(extracted_paths) >= max_frames:
+                    if max_frames > 0 and len(extracted_paths) >= max_frames:
                         logger.info("Reached maximum requested frames (%d)", max_frames)
                         break
 

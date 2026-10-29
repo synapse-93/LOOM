@@ -17,6 +17,12 @@ def test_default_config_model() -> None:
     assert cfg.scaling.strategy == "aruco"
     assert cfg.scaling.marker_size_mm == 50.0
     assert cfg.printability.min_wall_thickness_mm == 1.2
+    assert cfg.capture.selection_mode == "default"
+    assert cfg.capture.target_selected_frames == 30
+    assert cfg.capture.min_inlier_matches == 15
+    assert cfg.capture.max_homography_inlier_ratio == 0.85
+    assert cfg.capture.temporal_window_size == 3
+    assert cfg.capture.enable_geometric_verification is True
 
 
 def test_load_default_yaml() -> None:
@@ -50,7 +56,7 @@ def test_load_experiment_yaml() -> None:
 
 
 def test_load_capture_config_custom_fields(tmp_path: Path) -> None:
-    """Verify CaptureConfig custom fields (such as min_texture_score) are parsed from YAML."""
+    """Verify CaptureConfig custom fields (such as min_texture_score and selection_mode) are parsed from YAML."""
     custom_yaml = tmp_path / "capture_test.yaml"
     custom_yaml.write_text(
         """
@@ -58,12 +64,24 @@ name: "capture_test"
 capture:
   sharpness_threshold: 120.0
   min_texture_score: 25.0
+  selection_mode: "reconstruction_aware"
+  target_selected_frames: 25
+  min_inlier_matches: 20
+  max_homography_inlier_ratio: 0.80
+  temporal_window_size: 4
+  enable_geometric_verification: false
 """,
         encoding="utf-8",
     )
     cfg = load_config(custom_yaml)
     assert cfg.capture.sharpness_threshold == 120.0
     assert cfg.capture.min_texture_score == 25.0
+    assert cfg.capture.selection_mode == "reconstruction_aware"
+    assert cfg.capture.target_selected_frames == 25
+    assert cfg.capture.min_inlier_matches == 20
+    assert cfg.capture.max_homography_inlier_ratio == 0.80
+    assert cfg.capture.temporal_window_size == 4
+    assert cfg.capture.enable_geometric_verification is False
 
 
 def test_load_mesh_config_all_fields(tmp_path: Path) -> None:

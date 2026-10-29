@@ -68,6 +68,8 @@ When documenting an experiment, use this exact structure:
 | EXP-008 | 2026-10-28 | Capture Quality & Texture Heuristic | N/A (Unit test suite) | Quality Assessor | N/A | N/A | N/A | **VERIFIED (Software)** |
 | EXP-009 | 2026-10-28 | Smartphone Video (WhatsApp Capture) | 300 / 158 | COLMAP 4.2.1 (CPU) | N/A (Arbitrary SfM scale) | N/A | Yes (Repaired) | **VERIFIED** |
 | EXP-010 | 2026-10-28 | Smartphone Video (Motion Blur WIN_20261028) | 300 / 0 | Guard (Skipped) | N/A (0 selected) | N/A | N/A | **VERIFIED** |
+| EXP-011 | 2026-10-29 | Computer Mouse (`video_20261029_152036`) | 60 / 30 | COLMAP 4.2.1 (CPU) | N/A (Arbitrary SfM scale) | N/A | No (Fragmented) | **VERIFIED (Partial)** |
+| EXP-012 | 2026-10-29 | Computer Mouse (`video_20261029_152036`) | 120 / 60 | COLMAP 4.2.1 (CPU) | N/A (Arbitrary SfM scale) | N/A | No (Raw SfM Mesh) | **VERIFIED** |
 
 
 ---
@@ -411,3 +413,56 @@ When documenting an experiment, use this exact structure:
   - Report Output: reports/reconstruction.json generated with error_message providing actionable guidance (recommend slower camera movement, sharper focus, adequate lighting).
 - **Status & Empirical Integrity**:
   - **VERIFIED**: Robust invalid-input handling verified without crashing, throwing unhandled exceptions, or wasting computation on external tools.
+
+---
+
+### EXP-011: Baseline Reconstruction-Aware Selection Evaluation on Mouse Video (60 Frames)
+- **Date**: 2026-10-29
+- **Target Object**: Dark optical computer mouse on desk (`video_20261029_152036.mp4`).
+- **Run ID**: `run_20261029_192755_video_20261029_152036`
+- **Capture Conditions**:
+  - Resolution & FPS: 1080x1920 @ 59.76 fps (63.22s duration, 3,778 source frames).
+- **Pipeline Configuration**:
+  - Sampled Frames: 60 (step=62, spanning 61.21s / 96.8% coverage).
+  - Selector Mode: `reconstruction_aware` (`target_selected_frames=30`, `temporal_window_size=3`).
+  - Reconstruction Backend: COLMAP 4.2.1 (CPU-only).
+- **Measured Empirical Results**:
+  - Selected Frames: 30 (temporal span: 0.0s to 59.13s).
+  - Match Graph Diagnostics: 174 sliding window pairs evaluated, 86 connected pairs, 82 parallax-bearing pairs, 6 bridge frames prioritized.
+  - Registered Cameras: 6 / 30 (20.0% coverage).
+  - Initial Pair: Pair #8 (`frame_000620.jpg`) and #5 (`frame_000744.jpg`, bridge frame).
+  - Reconstructed 3D Points: 184 points.
+  - Mean Track Length: 3.22 observations/point.
+  - Mean Reprojection Error: 0.801 px.
+  - Generated Mesh (`mesh.ply`): 70 vertices, 120 faces (size: 2,579 bytes, max edge: 11.81 units).
+  - Execution Time: 42.0 seconds.
+- **Defects & Limitations Observed**:
+  - 6 registered images clustered in small temporal window (t=9.3s–14.5s); remaining 24 frames disconnected due to 62-frame stride.
+  - Sparse 184 points Delaunay-meshed into a coarse spiky hull connecting distant background points.
+- **Status & Empirical Integrity**:
+  - **VERIFIED (Partial)**: Initialized mapper and proved bridge frame selection, but mesh is insufficient to represent object surface.
+
+---
+
+### EXP-012: Dense Frame Sampling (120 Frames) & Multi-Model Primary Selection
+- **Date**: 2026-10-29
+- **Target Object**: Dark optical computer mouse on desk (`video_20261029_152036.mp4`).
+- **Run ID**: `run_20261029_200601_video_20261029_152036`
+- **Capture Conditions**:
+  - Resolution & FPS: 1080x1920 @ 59.76 fps (63.22s duration, 3,778 source frames).
+- **Pipeline Configuration**:
+  - Sampled Frames: 120 (step=31, spanning 61.5s / 97.3% coverage).
+  - Selector Mode: `reconstruction_aware` (`target_selected_frames=60`, `temporal_window_size=3`).
+  - Reconstruction Backend: COLMAP 4.2.1 (CPU-only) with dynamic model selection and `--DelaunayMeshing.max_side_length_factor 10`.
+- **Measured Empirical Results**:
+  - Selected Frames: 60 (rejected: 60).
+  - COLMAP Sparse Models Produced: 3 candidate models (`sparse/0`: 5 cams/209 pts; `sparse/1`: 21 cams/874 pts; `sparse/2`: 10 cams/258 pts).
+  - Primary Model Selected: `sparse/1` (selected via `_get_model_stats` maximizing registered cameras and points).
+  - Registered Cameras: **21 / 60 (35.0% coverage)** (up from 6 in baseline).
+  - Reconstructed 3D Points: **874 points** (up from 184 in baseline).
+  - Surface Mesh (`mesh.ply`): **469 vertices, 914 faces** (up from 70 vertices, 120 faces in baseline).
+  - Mesh Bounding Box: `[-4.39, -8.19, 8.79]` to `[4.24, 2.95, 12.47]` (extents: `[8.63, 11.14, 3.68]`).
+  - Median Edge Length: **0.210** (down from 0.690 in baseline).
+  - Execution Time: 167.92 seconds.
+- **Status & Empirical Integrity**:
+  - **VERIFIED**: Successfully eliminated the single-model binding defect and suppressed 28-meter Delaunay spikes, achieving a 4.7x increase in reconstructed points and a 7.6x increase in mesh faces.

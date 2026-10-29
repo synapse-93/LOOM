@@ -116,13 +116,13 @@ class FrameQualityAssessor:
         if is_low_contrast:
             reasons.append(
                 f"Low contrast (std dev {contrast:.1f} < 15.0)"
-        )
+            )
 
         if is_low_texture:
             reasons.append(
                 f"Low visible detail (heuristic score {texture_score:.1f} "
                 f"< threshold {min_texture_thresh:.1f})"
-        )
+            )
 
         # Redundancy comparison using 64x64 normalized thumbnail
         thumb = cv2.resize(gray, (64, 64), interpolation=cv2.INTER_AREA)
@@ -173,6 +173,11 @@ class FrameQualityAssessor:
             Tuple of (CaptureAnalysisArtifact, list of per-frame FrameQualityResult).
         """
         from loom.pipeline.artifacts import CaptureAnalysisArtifact
+
+        if getattr(self.config, "selection_mode", "default") == "reconstruction_aware":
+            from loom.capture.reconstruction_aware import ReconstructionAwareSelector
+            selector = ReconstructionAwareSelector(config=self.config)
+            return selector.assess_and_filter(frame_paths)
 
         results: list[FrameQualityResult] = []
         selected_frames: list[Path] = []
