@@ -93,3 +93,48 @@ def test_filter_strategy_keep_all() -> None:
     assert action.components_after == 2
     assert action.removed_components == 0
     assert len(cleaned_mesh.faces) == 16
+
+
+def test_get_face_components_returns_sorted_face_arrays() -> None:
+    """Verify get_face_components returns index arrays sorted descending by face count."""
+    mesh = create_disconnected_mesh()  # 12-face cube + 4-face tet
+    face_comps = MeshComponentAnalyzer.get_face_components(mesh)
+
+    assert len(face_comps) == 2
+    assert len(face_comps[0]) == 12
+    assert len(face_comps[1]) == 4
+
+
+def test_filter_strategy_centroid_proximity_default_component_zero() -> None:
+    """Verify when reference_point is None, Component #0 is directly selected."""
+    mesh = create_disconnected_mesh()
+    cfg = MeshConfig(component_strategy="centroid_proximity", reference_point=None)
+    filtered, action = MeshComponentAnalyzer.filter(mesh, cfg)
+
+    assert action.strategy == "centroid_proximity"
+    assert len(filtered.faces) == 12
+
+
+def test_filter_strategy_centroid_proximity_rejects_speck_when_large_component_exists() -> None:
+    """Verify that when large components exist, noise specks (< 1,000 faces) are strictly rejected."""
+    # Synthetic mesh with 1 large component (10,000 faces) and 1 speck (50 faces)
+    large_sphere = trimesh.creation.icosphere(subdivisions=4, radius=5.0)  # 5,120 faces
+    # Duplicate to create > 10,000 total faces
+    large_part2 = trimesh.creation.icosphere(subdivisions=4, radius=5.0)
+    large_mesh = trimesh.util.concatenate([large_sphere, large_part2])  # 10,240 faces in 2 parts or 1 component if combined
+    speck = trimesh.creation.icosphere(subdivisions=1, radius=0.1)  # 80 faces (< 1,000)
+    speck.vertices += [0.0, 0.0, 0.0]  # Centered at (0, 0, 0)
+    large_mesh.vertices += [50.0, 50.0, 0.0]  # Centered far away
+
+    scene = trimesh.util.concatenate([large_mesh, speck])
+    # Target reference point directly at speck (0, 0, 0)
+    cfg = MeshConfig(
+        component_strategy="centroid_proximity",
+        reference_point=(0.0, 0.0, 0.0),
+        min_component_faces=20,
+    )
+    filtered, action = MeshComponentAnalyzer.filter(scene, cfg)
+
+    # Speck (< 1,000 faces) must be rejected because large component exists
+    assert len(filtered.faces) > 1000
+    assert len(filtered.faces) != len(speck.faces)

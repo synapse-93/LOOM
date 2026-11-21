@@ -314,6 +314,160 @@ When documenting an experiment, use this exact structure:
   - Implementation & Synthetic Validation: **VERIFIED** (Exact deterministic scaling, zero topology distortion)
   - Physical Ground Truth Accuracy Validation: **PENDING LIVE PHYSICAL EXPERIMENT** (Requires real captured video of physical object with physical ArUco fiducial once host photogrammetry backend is unblocked `ISSUE-BLK-002`)
 
+---
+
+### EXP-008: Dense Photogrammetric Reconstruction & Validated Watertight STL Export (Shoe Video)
+- **Date**: 2026-11-10
+- **Target Object**: Leather running shoe capture (`shoe_2.mp4`)
+- **Capture & Dense MVS Parameters**:
+  - Reconstruction Backend: Native COLMAP 4.2.0 (CUDA 13.4, RTX 4060 GPU)
+  - Dense MVS Stereo: `--StereoFusion.min_num_pixels 2`, `--StereoFusion.max_image_size 1600`
+  - Stereo Fusion Yield: 467,399 dense points in `fused.ply` (density: $10,869.71\text{ pts/unit}^3$)
+  - Poisson Mesher: `--PoissonMeshing.depth 10`, `--PoissonMeshing.trim 0`, `--PoissonMeshing.point_weight 1.0`
+- **Processing Stages & Measured Mesh Metrics**:
+  1. Raw Poisson Surface (`meshed-poisson.ply`):
+     - Vertices: 543,013
+     - Faces: 1,084,399
+     - State: Ballooned zero-crossing in unobserved air with horizontal floor plane attached
+  2. KDTree Distance Culling (`03_distance_culled.ply`):
+     - Point Cloud Source: `fused.ply` (467,399 points)
+     - Local Point Spacing: 0.00284 units (median 2-NN)
+     - Culling Threshold: $3.5 \times \text{spacing} = 0.00995$ units
+     - Faces Removed: 440,699 air balloon faces
+     - Faces Preserved: 643,700 faces (357,326 vertices)
+  3. Dominant Component Isolation:
+     - Strategy: Centroid proximity / dominant component
+     - Separated Floor Plane: 77,540 faces detached and removed
+     - Isolated Shoe (Component 0): 171,731 vertices, 327,276 faces
+  4. Planar Base Slicing & Capping (`05_base_capped.ply`):
+     - Cut Elevation: $Z_{\text{base}} = 21.6019$
+     - Boundary Loops Capped: 283 loops
+     - Cap Triangles Added: 16,771 faces
+     - Post-Capping Vertices / Faces: 172,009 vertices / 344,046 faces
+  5. Multi-Pass Defect Repair:
+     - Boundary Loops Remaining: 0
+     - Boundary Edges Remaining: 0
+     - Non-Manifold Edges: 0
+     - Non-Manifold Vertices: 0
+  6. Manufacturing Printability Gate:
+     - Watertightness: PASSED (boundary edges = 0)
+     - Manifold Integrity: PASSED (0 non-manifold edges, 0 non-manifold vertices)
+     - Volume Check: PASSED ($0.167514\text{ mm}^3$, positive volume)
+     - Gate Status: PASSED (0 errors, 0 warnings)
+  7. Binary STL & Manifest Export:
+     - STL Path: `outputs/stl/cleaned_meshed-poisson_metric.stl` (17,202,384 bytes)
+     - Manifest Path: `outputs/stl/cleaned_meshed-poisson_metric_manifest.json`
+     - Bounding Box Dimensions: $2.48 \times 1.82 \times 0.65\text{ mm}$
+     - SHA-256: `c1300dd5b75d64a2ad34c24e995818626420efaf3d514804d956891915a417b9`
+- **Conclusion**:
+  - The combination of KDTree point-cloud distance culling and planar base capping successfully resolves the Poisson ballooning defect and produces a fully verified 3D printable watertight manifold mesh.
+
+---
+
+### EXP-009: Canonical Frame Normalization, Level Planar Base Capping & Scaled Watertight Shoe STL Export
+- **Date**: 2026-11-10
+- **Target Object**: Leather running shoe (`shoe_2.mp4` / dense COLMAP reconstruction)
+- **Pipeline Stages & Measured Empirical Metrics**:
+  1. Canonical Frame Normalization (`aligned_meshed-poisson.ply`):
+     - RANSAC Support Plane Inliers: 71,994 points
+     - Raw Support Plane Normal: $[-0.093375, -0.463503, 0.881162]$ (tilted 28.2° from world vertical)
+     - Normal Polarity Check: Best normal directed toward positive object mass ($d = -17.721$)
+     - Rotation $\mathbf{R}$: Rodrigues $SO(3)$ matrix mapping $[-0.0934, -0.4635, 0.8812] \to [0.0, 0.0, 1.0]$
+     - Translation $\mathbf{t}$: Support plane translated to $Z = 0$, object centered on $X = 0, Y = 0$
+     - Point Cloud Transformation: Dense point cloud (`fused.ply`, 467,399 points) transformed by identical $T_{4 \times 4}$
+  2. KDTree Point Cloud Distance Culling (`03_distance_culled.ply`):
+     - Air Balloon Faces Removed: 440,699 faces (1,084,399 -> 643,700 faces)
+     - Culling Threshold: 0.00995 units ($3.5 \times$ local spacing 0.00284 units)
+  3. Connected Component Isolation:
+     - Detached ground noise and isolated shoe Component #0: 327,276 faces (171,731 vertices)
+  4. Canonical Planar Base Capping (`05_base_capped.ply`):
+     - Cut Elevation: $Z_{\text{base}} = 0.0050$ (parallel to canonical floor support plane at $Z = 0$)
+     - Cap Faces Added: 12,026 faces across 243 boundary loops
+     - Floater Pruning: Discarded 92 tiny disconnected slivers (< 5% primary component) created along the cut boundary
+     - Watertight Defect Repair: Remaining boundary edges = 0, loops = 0
+  5. In-Memory Target-Length Metric Scaling:
+     - Target Maximum Dimension: 280.00 mm
+     - Uniform Scale Factor ($s$): $161.40689$
+     - Extents: $[280.00, 277.62, 147.30]\,\text{mm}$
+     - Vertex Coincident Collapse Guard: Omitted `merge_vertices()` to preserve clean 2-manifold topology
+  6. Printability Gate Validation:
+     - Watertight: PASSED (0 boundary edges)
+     - Manifold: PASSED (0 non-manifold edges, 0 non-manifold vertices)
+     - Positive Volume: PASSED ($794,059.0\,\text{mm}^3$)
+     - Gate Status: PASSED (0 errors, 0 warnings)
+  7. Binary STL & Manifest Export:
+     - STL Path: `outputs/stl/cleaned_aligned_meshed-poisson_metric.stl` (12,730,984 bytes)
+     - Triangle Count: 254,618 faces, Vertex Count: 127,311
+     - Manifest Path: `outputs/stl/cleaned_aligned_meshed-poisson_metric_manifest.json`
+     - Oriented Bounding Box: $299.7 \times 253.6 \times 75.0\,\text{mm}$
+     - SHA-256: `e3f6e08452acc5671bf8284ed004e384aa13e3a46248f1865a1089bf99d0fa30`
+- **Conclusion**:
+  - Executing canonical frame normalization prior to mesh cleaning resolves the 28.2° tilt error, ensuring planar base cuts slice parallel to the physical contact surface. Pruning post-capping boundary floaters delivers 100% watertight, printability-gate-verified STLs.
+
+---
+
+---
+
+### EXP-011: Universal Video-to-3D-Print Pipeline Overhaul (Pre-Mesh Canonical Normalization, Depth 10 Poisson, Validated Binary STL)
+- **Date**: 2026-11-10
+- **Target Object**: Sneaker resting on desk table (`data/raw/shoe_3.mp4`, 229 MB, 3269 raw frames)
+- **Hardware Platform**:
+  - CPU: AMD Ryzen 7 7840HS (8 cores / 16 threads)
+  - GPU: NVIDIA GeForce RTX 4060 Laptop GPU (8 GB VRAM), CUDA 13.4, Driver 570.86
+  - OS: Arch Linux x86_64
+- **Pipeline Stages & Measured Empirical Metrics**:
+  1. Keyframe Ingest & Downscaling:
+     - Input video: `data/raw/shoe_3.mp4`
+     - Strided keyframes: 42 frames selected evenly across duration
+     - Frame resolution: downscaled to max 1080px ($608 \times 1080$) using `cv2.INTER_AREA`
+     - Blur filter: Laplacian variance threshold = 20.0
+     - Extraction runtime: 37.04s
+  2. Sparse SfM Reconstruction:
+     - SIFT GPU Feature Extraction: 42 frames processed in 1.2s
+     - GPU Sequential Matching: `overlap=6`, `quadratic_overlap=0`, `loop_detection=1` in 0.8s
+     - SfM Mapper: 16 threads, bounded bundle adjustment (`ba_global=15`, `ba_local=12`) registered 18 key views in 2.2s
+     - Total SfM runtime: 4.21s
+  3. Dense MVS:
+     - Image Undistortion: 18 views undistorted in 0.2s
+     - CUDA PatchMatch Stereo: `max_image_size=1080`, `window_radius=5`, `num_iterations=4`, `geom_consistency=True`, `geom_consistency_max_cost=2.5`
+     - Stereo Fusion: `min_num_pixels=3`, fused 213,978 points (density 10,773.58 pts/unit³)
+  4. Pre-Mesh Canonical Frame Normalization & Segmentation:
+     - RANSAC Support Plane: inliers = 180,973 (84.6% of scene points)
+     - Rotated via Rodrigues $SO(3)$ to $[0, 0, 1]^T$, translated support plane to $Z=0.0$, centered elevated points on XY
+     - Transformed vertex normal vectors in lockstep: $\mathbf{n}' = \mathbf{n} R^T$
+     - Pruned subsurface noise ($Z < -0.005$) and background clutter ($R_{\text{cut}} = 1.25 \times R_{98}$)
+     - Exported 99,244 isolated points with rotated normals to `dense/fused_isolated.ply`
+  5. High-Resolution Poisson Meshing:
+     - Called native `colmap poisson_mesher` on `dense/fused_isolated.ply` with `--PoissonMeshing.depth 10`, `--PoissonMeshing.trim 0`, `--PoissonMeshing.point_weight 1.0`
+     - Poisson Mesher Succeeded in 11.2s: 312,897 vertices, 625,602 faces (14,703,324 bytes)
+     - Total Dense MVS & Meshing stage time: 220.67s
+  6. Phase 3 Mesh Cleaning & Planar Slicing:
+     - KDTree distance culling: 625,602 -> 552,103 faces (removed 73,499 floating faces)
+     - Component Filtering: kept 1 dominant component (removed 60 noise components, 8,519 faces)
+     - Planar Base Capping: sliced at $Z=0.0051$, capped with `mapbox_earcut` adding 12,257 cap faces across 136 loops with downward normals ($n_z < 0$)
+     - Sealed remaining apertures with `fill_holes()`
+     - Cleaning & capping runtime: 15.55s
+  7. In-Memory Target-Length Scaling & Build-Plate Snap:
+     - Maximum dimension scaled to 280.00 mm ($s=78.87543$) in float64 memory
+     - Bounding Box Dimensions: $L = 280.00\,\text{mm}$, $W = 224.45\,\text{mm}$, $H = 89.80\,\text{mm}$
+     - Contact Base: snapped sole flush to $Z_{\min} = 0.000000\,\text{mm}$, centered at $X=0.00, Y=0.00$
+  8. Printability Gate Validation:
+     - Watertight: PASSED (boundary edges = 0)
+     - Manifold: PASSED (non-manifold edges = 0, non-manifold vertices = 0)
+     - Positive Volume: PASSED ($67,206.02\,\text{mm}^3$)
+     - Gate Status: PASSED (0 errors, 0 warnings)
+  9. Binary STL & Manifest Export:
+     - STL Path: `outputs/stl/cleaned_meshed-poisson_metric.stl` (26,979,584 bytes, 539,590 triangles)
+     - Manifest Path: `outputs/stl/cleaned_meshed-poisson_metric_manifest.json`
+     - SHA-256: `a66f79a2d1da64d1d11b88eecbd869d15fb0b8e17d07bc1cc855d0c3df574e1c`
+     - Total Pipeline Execution Time: **283.93 seconds**
+- **Conclusion**:
+  - Pre-mesh canonical normalization with native rotated normal vectors (`nx, ny, nz`) and foreground cylindrical isolation completely eliminates mesh ballooning, solves the diagonal slice issue, allows native COLMAP depth 10 Poisson meshing without Delaunay fallback, and produces a 100% watertight, 2-manifold binary STL ready for 3D printing with a guaranteed flat build-plate base at $Z = 0.0$.
+
+
+
+
+
 
 
 

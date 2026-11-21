@@ -18,6 +18,27 @@ class ScaleTransformer:
     """Applies metric scaling transformations to 3D mesh vertices while strictly preserving topology."""
 
     @staticmethod
+    def get_affine_matrix(
+        scale_factor: float,
+        origin: tuple[float, float, float] | Sequence[float] | np.ndarray = (0.0, 0.0, 0.0),
+    ) -> np.ndarray:
+        """Construct 4x4 affine transformation matrix for uniform scaling about origin.
+
+        Formula:
+            v' = origin + scale_factor * (v - origin) = scale_factor * v + origin * (1 - scale_factor)
+            When origin is (0, 0, 0), simplifies strictly to v' = s * v.
+        """
+        s = float(scale_factor)
+        origin_arr = np.asarray(origin, dtype=np.float64)
+        ox, oy, oz = float(origin_arr[0]), float(origin_arr[1]), float(origin_arr[2])
+        return np.array([
+            [s, 0.0, 0.0, ox * (1.0 - s)],
+            [0.0, s, 0.0, oy * (1.0 - s)],
+            [0.0, 0.0, s, oz * (1.0 - s)],
+            [0.0, 0.0, 0.0, 1.0],
+        ], dtype=np.float64)
+
+    @staticmethod
     def transform_vertices(
         vertices: np.ndarray,
         scale_factor: float,
@@ -55,8 +76,10 @@ class ScaleTransformer:
         if len(verts.shape) != 2 or verts.shape[1] != 3:
             raise ValueError(f"Vertices array must be Nx3, got shape {verts.shape}")
 
-        # Deterministic linear scaling about origin
-        scaled_verts = origin_arr + s * (verts - origin_arr)
+        # Deterministic affine scaling about origin: v' = s * v (or origin + s * (v - origin))
+        affine_matrix = ScaleTransformer.get_affine_matrix(s, origin=origin_arr.flatten())
+        v_hom = np.hstack([verts, np.ones((len(verts), 1), dtype=np.float64)])
+        scaled_verts = (v_hom @ affine_matrix.T)[:, :3]
         return scaled_verts
 
     def transform_mesh(

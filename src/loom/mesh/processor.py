@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import trimesh
@@ -21,7 +21,7 @@ from loom.mesh.exceptions import (
     MeshLoadError,
     MeshProcessingError,
 )
-from loom.mesh.models import MeshProcessingResult, MeshProcessingStage
+from loom.mesh.models import CleanupActionResult, MeshProcessingResult, MeshProcessingStage
 
 from loom.mesh.repair import MeshRepairer
 
@@ -52,6 +52,7 @@ class MeshProcessor:
         input_mesh_path: Path,
         output_mesh_path: Optional[Path] = None,
         config: Optional[MeshConfig] = None,
+        point_cloud_path: Optional[Path | str] = None,
         raise_on_error: bool = True,
     ) -> MeshProcessingResult:
         """Execute the complete Phase 3 mesh processing pipeline.
@@ -92,6 +93,9 @@ class MeshProcessor:
                     mesh = loaded
                 else:
                     raise MeshLoadError(f"File loaded as unexpected type: {type(loaded)}")
+
+                if resolved_input.suffix.lower() == ".stl":
+                    mesh.merge_vertices()
             except (MeshFormatError, MeshInvalidError):
                 raise
             except Exception as exc:
@@ -119,15 +123,67 @@ class MeshProcessor:
             )
             stages_completed.append(MeshProcessingStage.DIAGNOSTICS_BEFORE.value)
 
+            # Stage 2b: Point Cloud KDTree Distance Culling (if point cloud provided)
+            cull_action: Optional[dict[str, Any]] = None
+            resolved_pc = point_cloud_path or getattr(active_cfg, "point_cloud_path", None)
+            if resolved_pc is not None and Path(resolved_pc).is_file():
+                cull_output_path = resolved_output.parent / "03_distance_culled.ply"
+                mult = getattr(active_cfg, "culling_multiplier", 3.5)
+                mesh, cull_action = MeshCleaner.cull_by_point_cloud_distance(
+                    mesh,
+                    point_cloud=resolved_pc,
+                    multiplier=mult,
+                    output_path=cull_output_path,
+                )
+                stages_completed.append(MeshProcessingStage.CULL_DISTANCE.value)
+
+            floor_action: Optional[dict[str, Any]] = None
+            if active_cfg.floor_removal_enabled and cull_action is None:
+                floor_output_path = resolved_output.parent / "04_floor_removed.ply"
+                mesh, floor_action = MeshCleaner.remove_floor_plane(
+                    mesh,
+                    normal_tolerance_deg=active_cfg.floor_normal_tolerance_deg,
+                    bottom_percentile=active_cfg.floor_bottom_percentile,
+                    distance_threshold=active_cfg.floor_distance_threshold,
+                    output_path=floor_output_path,
+                )
+                stages_completed.append(MeshProcessingStage.REMOVE_FLOOR.value)
+
             # Stage 3: Connected Component Filtering
             mesh, comp_action = MeshComponentAnalyzer.filter_components(mesh, active_cfg)
             stages_completed.append(MeshProcessingStage.ANALYZE_COMPONENTS.value)
 
             # Stage 4: Invalid & Degenerate Geometry Cleanup
-            mesh, cleanup_action = MeshCleaner.clean(mesh, active_cfg)
+            if cull_action is None and not active_cfg.turbo:
+                mesh, cleanup_action = MeshCleaner.clean(mesh, active_cfg)
+            else:
+                mesh.remove_unreferenced_vertices()
+                cleanup_action = CleanupActionResult(
+                    invalid_vertices_removed=0,
+                    invalid_faces_removed=0,
+                    degenerate_faces_removed=0,
+                    duplicate_faces_removed=0,
+                    unreferenced_vertices_removed=0,
+                    vertices_before=len(mesh.vertices),
+                    vertices_after=len(mesh.vertices),
+                    faces_before=len(mesh.faces),
+                    faces_after=len(mesh.faces),
+                )
             stages_completed.append(MeshProcessingStage.CLEAN_INVALID.value)
 
-            # Stage 5: Conservative Defect & Hole Repair
+            # Stage 5: Planar Base Capping (if enabled)
+            base_capping_action: Optional[dict[str, Any]] = None
+            if active_cfg.base_capping_enabled:
+                cap_output_path = resolved_output.parent / "05_base_capped.ply"
+                mesh, base_capping_action = MeshRepairer.slice_and_cap_base(
+                    mesh,
+                    z_base=active_cfg.base_capping_z,
+                    bottom_percentile=active_cfg.base_capping_percentile,
+                    output_path=cap_output_path,
+                )
+                stages_completed.append(MeshProcessingStage.BASE_CAPPING.value)
+
+            # Stage 6: Conservative Defect & Hole Repair
             mesh, repair_action = MeshRepairer.repair(mesh, active_cfg)
             stages_completed.append(MeshProcessingStage.REPAIR_DEFECTS.value)
 
@@ -164,6 +220,9 @@ class MeshProcessor:
                 components_action=comp_action,
                 cleanup_action=cleanup_action,
                 repair_action=repair_action,
+                floor_action=floor_action,
+                cull_action=cull_action,
+                base_capping_action=base_capping_action,
                 warnings=warnings,
                 error_message=None,
                 status=overall_status,
@@ -213,5 +272,8 @@ class MeshProcessor:
             except Exception as e:
                 logger.debug("Normal calculation notice: %s", e)
 
+        if normalized.is_watertight and getattr(normalized, "volume", None) is not None:
+            if normalized.volume < 0:
+                normalized.faces = normalized.faces[:, ::-1]
 
         return normalized

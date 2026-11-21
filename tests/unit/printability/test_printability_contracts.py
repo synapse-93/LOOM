@@ -31,12 +31,12 @@ def test_printability_report_export(tmp_path: Path) -> None:
     assert data["min_wall_thickness_mm"] == 1.5
 
 
-def test_manifold_and_watertight_checkers_raise_not_implemented() -> None:
-    """Verify checkers raise NotImplementedError on scaffolded methods."""
+def test_manifold_and_watertight_checkers_file_validation() -> None:
+    """Verify checkers raise FileNotFoundError when target mesh file does not exist."""
     mc = ManifoldChecker()
-    with pytest.raises(NotImplementedError):
-        mc.is_edge_manifold(Path("mesh.obj"))
+    with pytest.raises(FileNotFoundError):
+        mc.is_edge_manifold(Path("non_existent_mesh.obj"))
 
     wc = WatertightChecker()
-    with pytest.raises(NotImplementedError):
-        wc.is_watertight(Path("mesh.obj"))
+    with pytest.raises(FileNotFoundError):
+        wc.is_watertight(Path("non_existent_mesh.obj"))

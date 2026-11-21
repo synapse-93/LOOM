@@ -9,14 +9,18 @@ import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Optional, Sequence
 
-from loom.capture.quality import FrameQualityAssessor, FrameQualityResult
 from loom.config.models import LoomConfig, MeshConfig
-from loom.mesh.models import MeshProcessingResult
-from loom.mesh.processor import MeshProcessor
-from loom.scaling.models import ScalingResult
-from loom.scaling.processor import ScalingProcessor
+
+if TYPE_CHECKING:
+    from loom.capture.quality import FrameQualityAssessor, FrameQualityResult
+    from loom.mesh.models import MeshProcessingResult
+    from loom.mesh.processor import MeshProcessor
+    from loom.scaling.models import ScalingResult
+    from loom.scaling.processor import ScalingProcessor
+    from loom.video.frames import FrameExtractor
+    from loom.video.ingest import VideoIngestor
 
 
 from loom.pipeline.artifacts import (
@@ -24,7 +28,9 @@ from loom.pipeline.artifacts import (
     CaptureAnalysisArtifact,
     FrameSetArtifact,
     MeshArtifact,
+    ReconstructionCheckpointsArtifact,
     VideoArtifact,
+    export_reconstruction_checkpoints,
 )
 from loom.pipeline.stages import PipelineStage
 from loom.reconstruction.models import (
@@ -34,8 +40,6 @@ from loom.reconstruction.models import (
 )
 from loom.reconstruction.runner import ReconstructionRunner
 from loom.utils.paths import ensure_directory
-from loom.video.frames import FrameExtractor
-from loom.video.ingest import VideoIngestor
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +60,7 @@ class Phase1Result:
     quality_results: list[FrameQualityResult]
     reconstruction_result: Optional[ReconstructionResult] = None
     reconstruction_report_path: Optional[Path] = None
+    reconstruction_checkpoints: Optional[ReconstructionCheckpointsArtifact] = None
     mesh_processing_result: Optional[MeshProcessingResult] = None
     geometry_report_path: Optional[Path] = None
 
@@ -164,6 +169,10 @@ def run_phase1_pipeline(
         logger.info("Source video: %s", resolved_video)
 
         # Stage 1: Video Ingest
+        from loom.capture.quality import FrameQualityAssessor
+        from loom.video.frames import FrameExtractor
+        from loom.video.ingest import VideoIngestor
+
         ingestor = VideoIngestor()
         video_artifact = ingestor.ingest(resolved_video)
 
@@ -258,6 +267,7 @@ def run_phase1_pipeline(
         # Stage 4: Optional 3D Reconstruction (Phase 2)
         reconstruction_result: Optional[ReconstructionResult] = None
         reconstruction_report_path: Optional[Path] = None
+        reconstruction_checkpoints: Optional[ReconstructionCheckpointsArtifact] = None
 
         if reconstruct:
             logger.info(
@@ -315,6 +325,15 @@ def run_phase1_pipeline(
                     log_path=log_candidate if log_candidate.is_file() else None,
                 )
 
+            # Export and preserve intermediate checkpoints to outputs/reconstructions/<run_name>/
+            reconstruction_checkpoints = export_reconstruction_checkpoints(
+                run_name=run_id,
+                output_root=config.output_dir,
+                sparse_source=reconstruction_result.sparse_reconstruction_path,
+                dense_source=reconstruction_result.dense_point_cloud_path or reconstruction_result.point_cloud_path,
+                mesh_source=reconstruction_result.mesh_path,
+            )
+
             # Write reconstruction.json report
             reconstruction_report_path = reports_dir / "reconstruction.json"
             recon_report_dict = {
@@ -326,7 +345,13 @@ def run_phase1_pipeline(
                 "input_frames": reconstruction_result.input_frames_count,
                 "registered_cameras": reconstruction_result.registered_cameras_count,
                 "registration_ratio": reconstruction_result.registration_ratio,
-                "point_count": reconstruction_result.point_count,
+                "point_count": (
+                    reconstruction_checkpoints.point_count
+                    if reconstruction_checkpoints.point_count > 0
+                    else reconstruction_result.point_count
+                ),
+                "point_density": reconstruction_checkpoints.point_density,
+                "insufficient_coverage_warning": reconstruction_checkpoints.insufficient_coverage_warning,
                 "sparse_reconstruction": (
                     str(reconstruction_result.sparse_reconstruction_path)
                     if reconstruction_result.sparse_reconstruction_path
@@ -358,6 +383,27 @@ def run_phase1_pipeline(
                 "workspace_dir": str(recon_workspace),
                 "log_path": str(reconstruction_result.log_path) if reconstruction_result.log_path else None,
                 "error_message": reconstruction_result.error_message,
+                "checkpoints": {
+                    "reconstruction_dir": str(reconstruction_checkpoints.reconstruction_dir),
+                    "sparse_points_path": (
+                        str(reconstruction_checkpoints.sparse_points_path)
+                        if reconstruction_checkpoints.sparse_points_path
+                        else None
+                    ),
+                    "dense_point_cloud_path": (
+                        str(reconstruction_checkpoints.dense_point_cloud_path)
+                        if reconstruction_checkpoints.dense_point_cloud_path
+                        else None
+                    ),
+                    "raw_mesh_path": (
+                        str(reconstruction_checkpoints.raw_mesh_path)
+                        if reconstruction_checkpoints.raw_mesh_path
+                        else None
+                    ),
+                    "point_count": reconstruction_checkpoints.point_count,
+                    "point_density": reconstruction_checkpoints.point_density,
+                    "insufficient_coverage_warning": reconstruction_checkpoints.insufficient_coverage_warning,
+                },
             }
             with open(reconstruction_report_path, "w", encoding="utf-8") as rf:
                 json.dump(recon_report_dict, rf, indent=2)
@@ -379,6 +425,9 @@ def run_phase1_pipeline(
             and reconstruction_result.mesh_path.is_file()
         ):
             logger.info("=== Starting Phase 3: Mesh Processing on Reconstructed Mesh ===")
+            from loom.mesh.models import MeshProcessingResult
+            from loom.mesh.processor import MeshProcessor
+
             geometry_dir = ensure_directory(base_run_dir / "geometry")
             cleaned_mesh_path = geometry_dir / f"cleaned_{reconstruction_result.mesh_path.stem}.obj"
             processor = MeshProcessor(config.mesh)
@@ -415,6 +464,7 @@ def run_phase1_pipeline(
             quality_results=quality_results,
             reconstruction_result=reconstruction_result,
             reconstruction_report_path=reconstruction_report_path,
+            reconstruction_checkpoints=reconstruction_checkpoints,
             mesh_processing_result=mesh_processing_result,
             geometry_report_path=geometry_report_path,
         )
@@ -422,6 +472,99 @@ def run_phase1_pipeline(
         file_handler.flush()
         loom_logger.removeHandler(file_handler)
         file_handler.close()
+
+
+def run_phase2_reconstruction_pipeline(
+    frames: Sequence[Path] | Path,
+    output_dir: Optional[Path] = None,
+    config: Optional[LoomConfig] = None,
+    run_id: Optional[str] = None,
+    backend: Optional[str] = None,
+    dense: bool = True,
+) -> tuple[ReconstructionResult, ReconstructionCheckpointsArtifact, Path]:
+    """Execute standalone Phase 2 3D reconstruction and export intermediate checkpoints.
+
+    Preserves and exports:
+        <output_dir>/reconstructions/<run_name>/
+            01_sparse/points3D.ply
+            02_dense/fused.ply
+            03_raw_mesh/meshed-poisson.ply
+
+    Returns:
+        Tuple of (ReconstructionResult, ReconstructionCheckpointsArtifact, reconstruction_report_path).
+    """
+    active_config = config or LoomConfig()
+    recon_backend = backend or active_config.reconstruction.backend
+
+    if run_id is None:
+        timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_id = f"recon_{timestamp_str}"
+
+    base_run_dir = ensure_directory(output_dir or (active_config.output_dir / "runs" / run_id))
+    recon_workspace = ensure_directory(base_run_dir / "reconstruction")
+    reports_dir = ensure_directory(base_run_dir / "reports")
+    reconstruction_report_path = reports_dir / "reconstruction.json"
+
+    # Frame list resolution
+    if isinstance(frames, Path) and frames.is_dir():
+        frame_list = sorted([
+            p for p in frames.iterdir()
+            if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+        ])
+    elif isinstance(frames, (list, tuple)):
+        frame_list = [Path(p).resolve() for p in frames]
+    else:
+        frame_list = [Path(frames).resolve()]
+
+    job_cfg = ReconstructionJobConfig(
+        workspace_dir=recon_workspace,
+        quality_preset=active_config.reconstruction.quality,
+        timeout_seconds=active_config.reconstruction.timeout_seconds,
+        binary_path=active_config.reconstruction.binary_path,
+        keep_workspace=active_config.reconstruction.keep_workspace,
+        additional_args=active_config.reconstruction.additional_args,
+        extra_params={"dense": str(dense).lower()},
+    )
+
+    engine = ReconstructionRunner.get_engine(
+        recon_backend,
+        binary_path=active_config.reconstruction.binary_path,
+    )
+    result = engine.reconstruct(frame_list, job_cfg)
+
+    # Export intermediate checkpoints
+    checkpoints = export_reconstruction_checkpoints(
+        run_name=run_id,
+        output_root=output_dir or active_config.output_dir,
+        sparse_source=result.sparse_reconstruction_path,
+        dense_source=result.dense_point_cloud_path or result.point_cloud_path,
+        mesh_source=result.mesh_path,
+    )
+
+    # Report serialization
+    report_dict = {
+        "run_id": run_id,
+        "backend": result.backend_name,
+        "status": result.status.value,
+        "success": result.success,
+        "mesh_path": str(result.mesh_path) if result.mesh_path else None,
+        "point_count": checkpoints.point_count if checkpoints.point_count > 0 else result.point_count,
+        "point_density": checkpoints.point_density,
+        "insufficient_coverage_warning": checkpoints.insufficient_coverage_warning,
+        "checkpoints": {
+            "checkpoint_dir": str(checkpoints.reconstruction_dir),
+            "sparse_points_ply": str(checkpoints.sparse_points_path) if checkpoints.sparse_points_path else None,
+            "dense_fused_ply": str(checkpoints.dense_point_cloud_path) if checkpoints.dense_point_cloud_path else None,
+            "raw_mesh_ply": str(checkpoints.raw_mesh_path) if checkpoints.raw_mesh_path else None,
+            "point_count": checkpoints.point_count,
+            "point_density": checkpoints.point_density,
+            "insufficient_coverage_warning": checkpoints.insufficient_coverage_warning,
+        },
+    }
+    with open(reconstruction_report_path, "w", encoding="utf-8") as rf:
+        json.dump(report_dict, rf, indent=2)
+
+    return result, checkpoints, reconstruction_report_path
 
 
 def run_phase3_mesh_pipeline(
@@ -468,6 +611,8 @@ def run_phase3_mesh_pipeline(
 
     try:
         output_mesh_path = geometry_dir / f"cleaned_{resolved_mesh.stem}.obj"
+        from loom.mesh.processor import MeshProcessor
+
         processor = MeshProcessor(active_config.mesh)
         result = processor.process(resolved_mesh, output_mesh_path, active_config.mesh)
 
@@ -530,6 +675,8 @@ def run_phase4_scaling_pipeline(
 
     try:
         output_mesh_path = scaling_dir / f"scaled_{resolved_mesh.stem}.obj"
+        from loom.scaling.processor import ScalingProcessor
+
         processor = ScalingProcessor(active_config.scaling)
         result = processor.process(
             input_mesh_path=resolved_mesh,

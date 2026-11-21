@@ -16,6 +16,26 @@ from loom.mesh.models import RepairActionResult
 logger = logging.getLogger(__name__)
 
 
+def split_into_simple_cycles(loop: list[int]) -> list[list[int]]:
+    """Split a boundary loop (which may contain duplicate pinch vertices) into simple cycles."""
+    simple_cycles: list[list[int]] = []
+    stack: list[int] = []
+    pos_map: dict[int, int] = {}
+    for v in loop:
+        if v in pos_map:
+            idx = pos_map[v]
+            cycle = stack[idx:]
+            if len(cycle) >= 3:
+                simple_cycles.append(cycle)
+            for u in stack[idx:]:
+                pos_map.pop(u, None)
+            stack = stack[:idx]
+        stack.append(v)
+        pos_map[v] = len(stack) - 1
+    if len(stack) >= 3:
+        simple_cycles.append(stack)
+    return simple_cycles
+
 
 class MeshRepairer:
     """Detects surface boundary loops (holes) and performs conservative planar/polygon repair."""
@@ -60,7 +80,8 @@ class MeshRepairer:
             )
 
         # 1. Detect boundary directed edges (the holes)
-        loops, boundary_edges = cls.extract_boundary_loops(faces)
+        current_faces = faces.copy()
+        loops, boundary_edges = cls.extract_boundary_loops(current_faces)
         boundary_loops_before = len(loops)
         boundary_edges_before = len(boundary_edges)
 
@@ -68,57 +89,196 @@ class MeshRepairer:
         repairs_successful = 0
         defect_details: list[dict[str, Any]] = []
         new_faces: list[tuple[int, int, int]] = []
+        v_arr = vertices.copy()
+        existing_face_sets: set[frozenset[int]] = {frozenset(f) for f in faces}
+
+        close_all = getattr(config, "close_all_holes", False)
+        max_passes = 2 if close_all else 1
+
+        extents = np.ptp(v_arr, axis=0) if len(v_arr) > 0 else np.zeros(3)
+        total_bounding_perimeter = 2.0 * float(np.sum(extents))
+        max_allowed_loop_perimeter = 0.25 * total_bounding_perimeter
 
         if boundary_loops_before > 0:
             logger.info("Detected %d boundary loops (%d boundary edges).", boundary_loops_before, boundary_edges_before)
 
-            for idx, loop in enumerate(loops):
-                loop_len = len(loop)
-                # Check eligibility
-                if config.close_holes and loop_len <= config.max_hole_edges:
-                    repairs_attempted += 1
-                    try:
-                        loop_verts = vertices[loop]
-                        tri_indices = cls._triangulate_loop(loop, loop_verts)
-                        if tri_indices:
-                            new_faces.extend(tri_indices)
-                            repairs_successful += 1
-                            defect_details.append({
-                                "loop_id": idx,
-                                "edge_count": loop_len,
-                                "status": "REPAIRED",
-                                "triangles_added": len(tri_indices),
-                            })
-                            logger.info("Repaired boundary loop #%d (length %d) with %d triangles.", idx, loop_len, len(tri_indices))
-                        else:
-                            defect_details.append({
-                                "loop_id": idx,
-                                "edge_count": loop_len,
-                                "status": "UNREPAIRED",
-                                "reason": "Triangulation failed or degenerate loop geometry.",
-                            })
-                    except Exception as exc:
-                        logger.warning("Failed to triangulate hole #%d: %s", idx, exc)
+            for pass_idx in range(max_passes):
+                if pass_idx > 0:
+                    loops, _ = cls.extract_boundary_loops(current_faces)
+                    if not loops:
+                        break
+
+                all_cycles: list[list[int]] = []
+                for l in loops:
+                    all_cycles.extend(split_into_simple_cycles(l))
+
+                pass_successful = 0
+                for idx, cycle in enumerate(all_cycles):
+                    loop_len = len(cycle)
+                    cycle_pts = v_arr[cycle]
+                    diffs = cycle_pts - np.roll(cycle_pts, -1, axis=0)
+                    loop_perimeter = float(np.sum(np.linalg.norm(diffs, axis=1)))
+
+                    # 1. Reject if boundary loop exceeds 25% of total mesh bounding perimeter
+                    # (Elementary 3- and 4-edge holes are closed with 1 or 2 planar triangles without fan starbursts)
+                    if loop_len > 4 and total_bounding_perimeter > 1e-6 and loop_perimeter > max_allowed_loop_perimeter:
+                        reason = (
+                            f"Loop perimeter ({loop_perimeter:.4f}) exceeds 25% of total mesh bounding perimeter "
+                            f"({total_bounding_perimeter:.4f}, limit: {max_allowed_loop_perimeter:.4f})"
+                        )
                         defect_details.append({
-                            "loop_id": idx,
+                            "loop_id": len(defect_details),
                             "edge_count": loop_len,
+                            "perimeter": loop_perimeter,
                             "status": "UNREPAIRED",
-                            "reason": str(exc),
+                            "reason": reason,
                         })
+                        logger.info("Rejecting hole repair for large boundary loop #%d: %s", len(defect_details) - 1, reason)
+                        continue
+
+                    # Anti-starburst guard: reject any boundary loop containing > 60 edges
+                    if loop_len > 60:
+                        reason = f"Boundary loop exceeds 60 edges ({loop_len} edges); rejected by anti-starburst guard."
+                        defect_details.append({
+                            "loop_id": len(defect_details),
+                            "edge_count": loop_len,
+                            "perimeter": loop_perimeter,
+                            "status": "UNREPAIRED",
+                            "reason": reason,
+                        })
+                        logger.info("Rejecting hole repair for large boundary loop #%d: %s", len(defect_details) - 1, reason)
+                        continue
+
+                    # 2. Check planarity of the boundary loop
+                    is_planar = True
+                    max_plane_dist = 0.0
+                    normal = np.array([0.0, 0.0, 1.0])
+                    centered = np.zeros_like(cycle_pts)
+                    if loop_len >= 3:
+                        centroid = np.mean(cycle_pts, axis=0)
+                        centered = cycle_pts - centroid
+                        try:
+                            _, _, vh = np.linalg.svd(centered)
+                            normal = vh[2]
+                            max_plane_dist = float(np.max(np.abs(np.dot(centered, normal))))
+                            max_ext = float(np.max(extents)) if len(extents) > 0 else 1.0
+                            is_planar = (max_plane_dist <= 0.05 * max_ext) or (max_plane_dist <= 0.05 * loop_perimeter)
+                        except Exception:
+                            is_planar = True
+
+                    if not is_planar and (loop_len > 10 or loop_perimeter > 0.10 * total_bounding_perimeter):
+                        reason = (
+                            f"Non-planar boundary loop ({loop_len} edges, perimeter {loop_perimeter:.4f}, "
+                            f"max plane distance {max_plane_dist:.4f})"
+                        )
+                        defect_details.append({
+                            "loop_id": len(defect_details),
+                            "edge_count": loop_len,
+                            "perimeter": loop_perimeter,
+                            "status": "UNREPAIRED",
+                            "reason": reason,
+                        })
+                        logger.info("Preserving non-planar boundary loop #%d: %s", len(defect_details) - 1, reason)
+                        continue
+
+                    # 3. Check configuration eligibility
+                    if config.close_holes and (close_all or loop_len <= config.max_hole_edges):
+                        repairs_attempted += 1
+                        try:
+                            k = len(cycle)
+                            tri_indices: list[tuple[int, int, int]] = []
+                            if k == 3:
+                                tri_indices = [(cycle[0], cycle[1], cycle[2])]
+                            elif k == 4:
+                                tri_indices = [
+                                    (cycle[0], cycle[1], cycle[2]),
+                                    (cycle[0], cycle[2], cycle[3]),
+                                ]
+                            elif k <= 50:
+                                loop_verts = v_arr[cycle]
+                                tri_indices = cls._triangulate_loop(cycle, loop_verts)
+                                if not tri_indices and k <= 12 and is_planar:
+                                    c_idx = len(v_arr)
+                                    centroid = np.mean(v_arr[cycle], axis=0)
+                                    v_arr = np.vstack([v_arr, centroid])
+                                    tri_indices = [(cycle[i], cycle[(i + 1) % k], c_idx) for i in range(k)]
+                            else:
+                                # For k > 50, attempt 2D planar mapbox-earcut if planar; never create giant starburst fan
+                                if is_planar:
+                                    try:
+                                        import mapbox_earcut
+
+                                        u_axis = np.cross(normal, np.array([1.0, 0.0, 0.0]) if abs(normal[0]) < 0.9 else np.array([0.0, 1.0, 0.0]))
+                                        u_norm = np.linalg.norm(u_axis)
+                                        if u_norm > 1e-9:
+                                            u_axis /= u_norm
+                                            v_axis = np.cross(normal, u_axis)
+                                            pts_2d = np.column_stack([np.dot(centered, u_axis), np.dot(centered, v_axis)])
+                                            pts_2d = np.ascontiguousarray(pts_2d, dtype=np.float64)
+                                            rings = np.array([k], dtype=np.uint32)
+                                            t_idx = mapbox_earcut.triangulate_float64(pts_2d, rings)
+                                            if len(t_idx) >= 3:
+                                                tri_indices = [(cycle[int(t_idx[ti])], cycle[int(t_idx[ti + 1])], cycle[int(t_idx[ti + 2])]) for ti in range(0, len(t_idx), 3)]
+                                    except Exception:
+                                        tri_indices = []
+
+                            # Filter out any triangles that already exist to prevent non-manifold duplicate edges
+                            valid_tris = []
+                            for tri in tri_indices:
+                                f_set = frozenset(tri)
+                                if f_set not in existing_face_sets:
+                                    valid_tris.append(tri)
+                                    existing_face_sets.add(f_set)
+
+                            if valid_tris:
+                                new_faces.extend(valid_tris)
+                                repairs_successful += 1
+                                pass_successful += 1
+                                defect_details.append({
+                                    "loop_id": len(defect_details),
+                                    "edge_count": loop_len,
+                                    "perimeter": loop_perimeter,
+                                    "status": "REPAIRED",
+                                    "triangles_added": len(valid_tris),
+                                })
+                                logger.debug("Repaired boundary loop #%d (length %d) with %d triangles.", len(defect_details) - 1, loop_len, len(valid_tris))
+                            else:
+                                defect_details.append({
+                                    "loop_id": len(defect_details),
+                                    "edge_count": loop_len,
+                                    "perimeter": loop_perimeter,
+                                    "status": "UNREPAIRED",
+                                    "reason": "Triangulation failed or degenerate loop geometry.",
+                                })
+                        except Exception as exc:
+                            logger.warning("Failed to triangulate hole #%d: %s", len(defect_details), exc)
+                            defect_details.append({
+                                "loop_id": len(defect_details),
+                                "edge_count": loop_len,
+                                "perimeter": loop_perimeter,
+                                "status": "UNREPAIRED",
+                                "reason": str(exc),
+                            })
+                    else:
+                        # Defect exceeds size threshold or hole closing disabled
+                        reason = (
+                            f"Loop edge count ({loop_len}) exceeds max_hole_edges limit ({config.max_hole_edges})"
+                            if config.close_holes
+                            else "Hole closing disabled by configuration."
+                        )
+                        defect_details.append({
+                            "loop_id": len(defect_details),
+                            "edge_count": loop_len,
+                            "perimeter": loop_perimeter,
+                            "status": "UNREPAIRED",
+                            "reason": reason,
+                        })
+                        logger.info("Preserving open boundary loop #%d (length %d): %s", len(defect_details) - 1, loop_len, reason)
+
+                if pass_successful > 0:
+                    current_faces = np.vstack([faces, np.asarray(new_faces, dtype=np.int64)])
                 else:
-                    # Defect exceeds size threshold or hole closing disabled
-                    reason = (
-                        f"Loop edge count ({loop_len}) exceeds max_hole_edges limit ({config.max_hole_edges})"
-                        if config.close_holes
-                        else "Hole closing disabled by configuration."
-                    )
-                    defect_details.append({
-                        "loop_id": idx,
-                        "edge_count": loop_len,
-                        "status": "UNREPAIRED",
-                        "reason": reason,
-                    })
-                    logger.info("Preserving open boundary loop #%d (length %d): %s", idx, loop_len, reason)
+                    break
 
         # 2. Combine existing faces and newly generated repair faces
         if new_faces:
@@ -127,7 +287,7 @@ class MeshRepairer:
             all_faces = faces
 
         repaired_mesh = trimesh.Trimesh(
-            vertices=vertices,
+            vertices=v_arr,
             faces=all_faces,
             process=False,
         )
@@ -136,6 +296,10 @@ class MeshRepairer:
         normals_unified = False
         if config.unify_normals and len(repaired_mesh.faces) > 0:
             normals_unified = cls._unify_normals_and_winding(repaired_mesh)
+
+        if repaired_mesh.is_watertight and getattr(repaired_mesh, "volume", None) is not None:
+            if repaired_mesh.volume < 0:
+                repaired_mesh.faces = repaired_mesh.faces[:, ::-1]
 
 
         # 4. Measure remaining boundary loops and edges
@@ -426,4 +590,288 @@ class MeshRepairer:
         repaired, _ = self.repair(loaded, cfg)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         repaired.export(output_path)
+        return output_path
+
+    @classmethod
+    def slice_and_cap_base(
+        cls,
+        mesh: trimesh.Trimesh,
+        z_base: Optional[float] = None,
+        bottom_percentile: float = 0.02,
+        output_path: Optional[Path | str] = None,
+    ) -> tuple[trimesh.Trimesh, dict[str, Any]]:
+        """Slice geometry at Z_base and cleanly cap the planar boundary loop for 3D printing.
+
+        Uses pure NumPy ear-clipping triangulation (no external shapely or C dependencies).
+        Creates a completely flat contact surface for the build plate.
+
+        Args:
+            mesh: Input trimesh geometry.
+            z_base: Explicit Z elevation at which to slice the geometry.
+                    If None, computed from bottom_percentile.
+            bottom_percentile: Bounding box percentile above minimum Z at which to slice (default: 0.02).
+            output_path: Optional path to export intermediate mesh (e.g. 05_base_capped.ply).
+
+        Returns:
+            Tuple of (capped_mesh, result_dict) where result_dict contains capping metrics.
+        """
+        vertices = np.asarray(mesh.vertices, dtype=np.float64)
+        faces = np.asarray(mesh.faces, dtype=np.int64)
+
+        if len(faces) == 0 or len(vertices) == 0:
+            return mesh, {
+                "base_capped": False,
+                "z_base": 0.0,
+                "cap_faces_added": 0,
+                "boundary_loops_capped": 0,
+                "is_watertight": False,
+                "output_path": None,
+            }
+
+        z_min = float(np.min(vertices[:, 2]))
+        z_max = float(np.max(vertices[:, 2]))
+        z_span = z_max - z_min
+
+        if z_span <= 1e-8:
+            return mesh, {
+                "base_capped": False,
+                "z_base": z_min,
+                "cap_faces_added": 0,
+                "boundary_loops_capped": 0,
+                "is_watertight": mesh.is_watertight,
+                "output_path": None,
+            }
+
+        if z_base is not None:
+            target_z = float(z_base)
+        else:
+            target_z = z_min + bottom_percentile * z_span
+
+        if target_z >= z_max:
+            logger.warning("Base slicing Z (%.4f) >= maximum Z (%.4f); cannot slice mesh.", target_z, z_max)
+            return mesh, {
+                "base_capped": False,
+                "z_base": target_z,
+                "cap_faces_added": 0,
+                "boundary_loops_capped": 0,
+                "is_watertight": mesh.is_watertight,
+                "output_path": None,
+            }
+
+        # Perturb target_z slightly if any vertex lies directly on it to prevent degenerate cut edges
+        while np.any(np.abs(vertices[:, 2] - target_z) < 1e-6):
+            target_z += 1e-5
+
+        # 1. Triangle Slicing (pure NumPy)
+        zv = vertices[:, 2]
+        new_vertices = list(vertices.copy())
+        new_faces: list[tuple[int, int, int]] = []
+        edge_intersections: dict[tuple[int, int], int] = {}
+
+        def get_intersection(u: int, v: int) -> int:
+            key = (min(u, v), max(u, v))
+            if key in edge_intersections:
+                return edge_intersections[key]
+            pu = vertices[u]
+            pv = vertices[v]
+            zu = pu[2]
+            zv_val = pv[2]
+            t = float((target_z - zu) / (zv_val - zu))
+            p_inter = pu + t * (pv - pu)
+            p_inter[2] = target_z
+            idx = len(new_vertices)
+            new_vertices.append(p_inter)
+            edge_intersections[key] = idx
+            return idx
+
+        for f in faces:
+            i0, i1, i2 = int(f[0]), int(f[1]), int(f[2])
+            h0, h1, h2 = zv[i0], zv[i1], zv[i2]
+            a0, a1, a2 = bool(h0 > target_z), bool(h1 > target_z), bool(h2 > target_z)
+            k = int(a0) + int(a1) + int(a2)
+
+            if k == 3:
+                new_faces.append((i0, i1, i2))
+            elif k == 0:
+                continue
+            elif k == 1:
+                if a0:
+                    vA, vB, vC = i0, i1, i2
+                elif a1:
+                    vA, vB, vC = i1, i2, i0
+                else:
+                    vA, vB, vC = i2, i0, i1
+                I_AB = get_intersection(vA, vB)
+                I_CA = get_intersection(vC, vA)
+                new_faces.append((vA, I_AB, I_CA))
+            elif k == 2:
+                if not a2:
+                    vA, vB, vC = i0, i1, i2
+                elif not a0:
+                    vA, vB, vC = i1, i2, i0
+                else:
+                    vA, vB, vC = i2, i0, i1
+                I_BC = get_intersection(vB, vC)
+                I_CA = get_intersection(vC, vA)
+                new_faces.append((vA, vB, I_BC))
+                new_faces.append((vA, I_BC, I_CA))
+
+        v_arr = np.asarray(new_vertices, dtype=np.float64)
+        sliced_faces = list(new_faces)
+        existing_face_sets = {frozenset(f) for f in sliced_faces}
+
+        # 2. Extract and triangulate boundary loops on sliced mesh
+        loops, _ = cls.extract_boundary_loops(np.asarray(sliced_faces, dtype=np.int64))
+        cap_faces: list[tuple[int, int, int]] = []
+        loops_capped = 0
+
+        for loop in loops:
+            cycles = split_into_simple_cycles(loop)
+            for c in cycles:
+                c_pts = v_arr[c]
+                is_on_base = bool(np.all(np.abs(c_pts[:, 2] - target_z) <= 1e-3))
+                # Only cap the planar cut loop created by slicing at target_z
+                if not is_on_base:
+                    logger.debug("Skipping non-base boundary loop (%d edges) during planar base capping.", len(c))
+                    continue
+
+                k_c = len(c)
+                cand_tris: list[tuple[int, int, int]] = []
+                if k_c == 3:
+                    cand_tris.append((c[0], c[1], c[2]))
+                elif k_c == 4:
+                    cand_tris.append((c[0], c[1], c[2]))
+                    cand_tris.append((c[0], c[2], c[3]))
+                else:
+                    triangulated = False
+                    # Prefer mapbox-earcut for fast, robust planar 2D triangulation
+                    try:
+                        import mapbox_earcut
+
+                        pts_2d = np.ascontiguousarray(c_pts[:, :2], dtype=np.float64)
+                        rings = np.array([k_c], dtype=np.uint32)
+                        tri_indices = mapbox_earcut.triangulate_float64(pts_2d, rings)
+                        if len(tri_indices) >= 3:
+                            for t in range(0, len(tri_indices), 3):
+                                idx0 = c[int(tri_indices[t])]
+                                idx1 = c[int(tri_indices[t + 1])]
+                                idx2 = c[int(tri_indices[t + 2])]
+                                cand_tris.append((idx0, idx1, idx2))
+                            triangulated = True
+                    except Exception as earcut_err:
+                        logger.debug("mapbox_earcut triangulation fallback: %s", earcut_err)
+
+                    if not triangulated:
+                        # Fallback to _ear_clip_2d
+                        try:
+                            pts_2d = np.ascontiguousarray(c_pts[:, :2], dtype=np.float64)
+                            local_tris = cls._ear_clip_2d(pts_2d)
+                            if local_tris:
+                                for t0, t1, t2 in local_tris:
+                                    cand_tris.append((c[t0], c[t1], c[t2]))
+                                triangulated = True
+                        except Exception as ear_err:
+                            logger.debug("Pure ear clipping fallback: %s", ear_err)
+
+                    if not triangulated:
+                        c_idx = len(v_arr)
+                        centroid = np.mean(c_pts, axis=0)
+                        centroid[2] = target_z
+                        v_arr = np.vstack([v_arr, centroid])
+                        for i in range(k_c):
+                            cand_tris.append((c[i], c[(i + 1) % k_c], c_idx))
+
+                # For triangles on the base cut plane, ensure outward downward normals (n_z < 0)
+                for tri in cand_tris:
+                    idx0, idx1, idx2 = tri
+                    p0, p1, p2 = v_arr[idx0], v_arr[idx1], v_arr[idx2]
+                    cross_z = (p1[0] - p0[0]) * (p2[1] - p0[1]) - (p1[1] - p0[1]) * (p2[0] - p0[0])
+                    if cross_z > 0:
+                        tri = (idx0, idx2, idx1)
+                    f_set = frozenset(tri)
+                    if f_set not in existing_face_sets:
+                        cap_faces.append(tri)
+                        existing_face_sets.add(f_set)
+                loops_capped += 1
+
+        if cap_faces:
+            all_faces = np.vstack([np.asarray(sliced_faces, dtype=np.int64), np.asarray(cap_faces, dtype=np.int64)])
+        else:
+            all_faces = np.asarray(sliced_faces, dtype=np.int64)
+
+        capped_mesh = trimesh.Trimesh(
+            vertices=v_arr,
+            faces=all_faces,
+            process=False,
+        )
+
+        # Prune small floating slivers generated along the planar cut boundary
+        from loom.mesh.components import MeshComponentAnalyzer
+        comps = MeshComponentAnalyzer.get_face_components(capped_mesh)
+        if len(comps) > 1:
+            total_faces = len(capped_mesh.faces)
+            max_comp_faces = len(comps[0])
+            if max_comp_faces > 1000:
+                keep_faces = [idx for comp in comps if len(comp) >= max(10, 0.05 * max_comp_faces) for idx in comp]
+                if len(keep_faces) > 0 and len(keep_faces) < total_faces:
+                    capped_mesh = capped_mesh.submesh([keep_faces], append=True)
+
+        if not capped_mesh.is_watertight:
+            # Conservative defect repair: only close small planar defects (< 25% bounding perimeter)
+            cfg_conservative = MeshConfig(fill_holes=True, max_hole_edges=30, close_all_holes=False)
+            capped_mesh, _ = cls.repair(capped_mesh, cfg_conservative)
+
+        try:
+            trimesh.repair.fix_winding(capped_mesh)
+        except Exception:
+            pass
+        capped_mesh.fix_normals()
+
+        if capped_mesh.is_watertight and getattr(capped_mesh, "volume", None) is not None:
+            if capped_mesh.volume < 0:
+                capped_mesh.faces = capped_mesh.faces[:, ::-1]
+
+        # Clean unreferenced vertices without altering surface topology
+        capped_mesh.remove_unreferenced_vertices()
+        cleaned_capped = capped_mesh
+
+        if output_path is not None:
+            out_p = Path(output_path).resolve()
+            out_p.parent.mkdir(parents=True, exist_ok=True)
+            cleaned_capped.export(out_p)
+            logger.info("Exported base-capped intermediate mesh to: %s", out_p)
+
+        logger.info(
+            "Planar base capping complete at Z=%.4f: added %d cap faces across %d boundary loops.",
+            target_z,
+            len(cap_faces),
+            loops_capped,
+        )
+
+        return cleaned_capped, {
+            "base_capped": len(cap_faces) > 0,
+            "z_base": target_z,
+            "cap_faces_added": len(cap_faces),
+            "boundary_loops_capped": loops_capped,
+            "is_watertight": cleaned_capped.is_watertight,
+            "output_path": Path(output_path).resolve() if output_path else None,
+        }
+
+    def cap_base(
+        self,
+        mesh_path: Path,
+        output_path: Path,
+        z_base: Optional[float] = None,
+        bottom_percentile: float = 0.02,
+    ) -> Path:
+        """Slice mesh geometry at Z_base and cap boundary loop cleanly for 3D printing."""
+        loaded = trimesh.load(mesh_path, process=False)
+        if isinstance(loaded, trimesh.Scene):
+            loaded = trimesh.util.concatenate(list(loaded.geometry.values()))
+        capped, _ = self.slice_and_cap_base(
+            mesh=loaded,
+            z_base=z_base,
+            bottom_percentile=bottom_percentile,
+            output_path=output_path,
+        )
         return output_path

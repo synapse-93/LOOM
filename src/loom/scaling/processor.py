@@ -14,6 +14,7 @@ from loom.scaling.aruco import ArucoDetector
 from loom.scaling.exceptions import (
     MeshScalingError,
     MeshScalingValidationError,
+    ReferenceDetectionError,
     ReferenceMeasurementError,
     ScaleEstimationError,
     ScalingConfigError,
@@ -62,15 +63,19 @@ class ScalingProcessor:
         reference_measurements: Optional[float | Sequence[float] | Sequence[tuple[float, float, float] | Sequence[float] | np.ndarray]] = None,
         reference_marker: Optional[ReferenceMarker] = None,
         origin: Optional[tuple[float, float, float]] = None,
+        colmap_dir: Optional[Path | str] = None,
+        images_dir: Optional[Path | str] = None,
+        frame_paths: Optional[Sequence[Path | str]] = None,
+        max_reprojection_error_px: Optional[float] = None,
         raise_on_error: bool = True,
     ) -> ScalingResult:
         """Execute Phase 4 metric scaling on input mesh.
 
         Stages:
             1. Validate input mesh file and configuration.
-            2. Acquire and aggregate reference measurements.
-            3. Estimate metric scale factor.
-            4. Transform mesh coordinates about specified origin.
+            2. Acquire and aggregate reference measurements (via explicit input or COLMAP ArUco triangulation).
+            3. Estimate metric scale factor (s = L_real / L_sfm).
+            4. Transform mesh coordinates about specified origin using affine matrix.
             5. Validate transformed output mesh geometry.
             6. Export scaled mesh and produce scaling report.
 
@@ -80,6 +85,10 @@ class ScalingProcessor:
             reference_measurements: Measured size, list of lengths, or 4 3D corners of the reference marker.
             reference_marker: Optional reference marker specification (overrides config).
             origin: Transformation origin (default: config.transformation_origin or (0, 0, 0)).
+            colmap_dir: Optional path to COLMAP sparse directory for automatic 2D-to-3D marker triangulation.
+            images_dir: Optional directory containing keyframe images for ArUco detection.
+            frame_paths: Optional sequence of explicit frame image paths.
+            max_reprojection_error_px: Outlier ray rejection threshold in pixels (default: 2.0).
             raise_on_error: If True, raise typed ScalingError on failure; if False, return failed ScalingResult.
 
         Returns:
@@ -98,6 +107,14 @@ class ScalingProcessor:
         )
 
         transform_origin = origin or self.config.transformation_origin
+
+        active_colmap_dir = colmap_dir or self.config.colmap_dir
+        active_images_dir = images_dir or self.config.images_dir
+        active_max_reproj = (
+            max_reprojection_error_px
+            if max_reprojection_error_px is not None
+            else self.config.max_reprojection_error_px
+        )
 
         input_str = str(input_mesh_path)
         resolved_output: Optional[Path] = None
@@ -135,36 +152,96 @@ class ScalingProcessor:
                 )
 
             # Stage 3: Acquire and aggregate reference measurement
-            if reference_measurements is None:
-                raise ReferenceMeasurementError(
-                    "No reference measurements provided. Live 3D reference extraction requires photogrammetric output."
-                )
-
             measurement: ReferenceMeasurement
-            if isinstance(reference_measurements, (int, float)):
-                measurement = MeasurementEngine.from_observations([float(reference_measurements)])
-            elif isinstance(reference_measurements, Sequence):
-                if len(reference_measurements) == 0:
-                    raise ReferenceMeasurementError("Reference measurements sequence is empty.")
-                first_elem = reference_measurements[0]
-                if isinstance(first_elem, (int, float, np.floating, np.integer)):
-                    # Scalar observation list
-                    measurement = MeasurementEngine.from_observations([float(x) for x in reference_measurements])
-                elif isinstance(first_elem, (list, tuple, np.ndarray)) and len(first_elem) == 3:
-                    # 4 3D corner coordinates
-                    measurement = MeasurementEngine.from_3d_corners(reference_measurements)  # type: ignore
+            if reference_measurements is not None:
+                if isinstance(reference_measurements, (int, float, np.floating, np.integer)):
+                    measurement = MeasurementEngine.from_observations([float(reference_measurements)])
+                elif isinstance(reference_measurements, Sequence):
+                    if len(reference_measurements) == 0:
+                        raise ReferenceMeasurementError("Reference measurements sequence is empty.")
+                    first_elem = reference_measurements[0]
+                    if isinstance(first_elem, (int, float, np.floating, np.integer)):
+                        # Scalar observation list
+                        measurement = MeasurementEngine.from_observations([float(x) for x in reference_measurements])
+                    elif isinstance(first_elem, (list, tuple, np.ndarray)) and len(first_elem) == 3:
+                        # 4 3D corner coordinates
+                        measurement = MeasurementEngine.from_3d_corners(reference_measurements)  # type: ignore
+                    else:
+                        raise ReferenceMeasurementError(
+                            f"Unsupported reference measurement format with element type {type(first_elem)}"
+                        )
                 else:
                     raise ReferenceMeasurementError(
-                        f"Unsupported reference measurement format with element type {type(first_elem)}"
+                        f"Unsupported reference measurements type: {type(reference_measurements)}"
                     )
+            elif active_colmap_dir is not None:
+                logger.info(
+                    "Acquiring 3D ArUco reference from COLMAP sparse reconstruction at %s...",
+                    active_colmap_dir,
+                )
+                detector = ArucoDetector(
+                    dictionary_name=marker.dictionary,
+                    target_marker_id=marker.marker_id,
+                    known_size_mm=marker.known_size_mm,
+                )
+                try:
+                    l_sfm, corners_3d, edge_lengths, reproj_errs = detector.compute_reconstructed_marker_size(
+                        colmap_dir=active_colmap_dir,
+                        images_dir=active_images_dir,
+                        frame_paths=frame_paths,
+                        target_id=marker.marker_id,
+                        max_reproj_error_px=active_max_reproj,
+                    )
+                    measurement = MeasurementEngine.from_3d_corners(corners_3d)
+                except ReferenceDetectionError as det_exc:
+                    logger.warning(
+                        "[WARNING] ArUco marker not observed in registered views. "
+                        "Bypassing metric scaling; preserving photogrammetric units."
+                    )
+                    warnings.append(
+                        "ArUco marker not observed in registered views. "
+                        "Bypassing metric scaling; preserving photogrammetric units."
+                    )
+                    if not raise_on_error:
+                        mesh.export(str(resolved_output))
+                        exec_time = time.perf_counter() - start_time
+                        return ScalingResult(
+                            input_mesh_path=str(resolved_input),
+                            output_mesh_path=str(resolved_output),
+                            status="SKIPPED",
+                            reference=marker.to_dict(),
+                            measurement=None,
+                            scale_estimate=None,
+                            scale_factor=1.0,
+                            transformation_origin=transform_origin,
+                            bounds_before=bounds_before,
+                            bounds_after=bounds_before,
+                            vertex_count_before=v_count_before,
+                            vertex_count_after=v_count_before,
+                            face_count_before=f_count_before,
+                            face_count_after=f_count_before,
+                            execution_time_seconds=exec_time,
+                            warnings=warnings,
+                            errors=[],
+                        )
+                    raise
             else:
                 raise ReferenceMeasurementError(
-                    f"Unsupported reference measurements type: {type(reference_measurements)}"
+                    "No reference measurements or COLMAP reconstruction directory provided. "
+                    "Live 3D reference extraction requires photogrammetric output."
                 )
 
             # Stage 4: Estimate scale
             scale_est = ScaleEstimator.estimate(marker.known_size_mm, measurement)
             scale_factor = scale_est.scale_factor
+
+            logger.info(
+                "Metric scaling parameters: Target Marker Size = %.2f mm, "
+                "Reconstructed SfM Size (L_sfm) = %.6f, Calculated Scale Factor (s) = %.6f",
+                marker.known_size_mm,
+                measurement.reconstructed_size,
+                scale_factor,
+            )
 
             # Stage 5: Transform mesh
             scaled_mesh = self._transformer.transform_mesh(mesh, scale_factor, origin=transform_origin)

@@ -20,6 +20,7 @@ class ExportManifest:
     volume_mm3: float
     is_watertight: bool
     scale_factor_applied: float
+    triangle_count: int = 0
     units: str = "mm"
     created_at: str = field(
         default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -36,6 +37,7 @@ class ExportManifest:
             "file_sha256": self.file_sha256,
             "bounding_box_mm": list(self.bounding_box_mm),
             "volume_mm3": self.volume_mm3,
+            "triangle_count": self.triangle_count,
             "is_watertight": self.is_watertight,
             "scale_factor_applied": self.scale_factor_applied,
             "units": self.units,

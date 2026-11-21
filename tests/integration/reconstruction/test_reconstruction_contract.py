@@ -46,8 +46,10 @@ def test_colmap_adapter_contract() -> None:
     is_avail = adapter.is_available()
     assert isinstance(is_avail, bool)
 
+    from loom.reconstruction.exceptions import ReconstructionInvalidInputError
+
     cfg = ReconstructionJobConfig(workspace_dir=Path("outputs/test"))
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(ReconstructionInvalidInputError):
         adapter.reconstruct([], cfg)
 
 

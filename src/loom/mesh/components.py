@@ -44,43 +44,62 @@ class MeshComponentAnalyzer:
 
 
     @classmethod
-    def _split_submeshes(cls, mesh: trimesh.Trimesh) -> list[trimesh.Trimesh]:
-        """Split mesh into connected components using face_adjacency without requiring networkx."""
+    def get_face_components(cls, mesh: trimesh.Trimesh) -> list[np.ndarray]:
+        """Compute connected component face index arrays using face_adjacency directly.
+
+        Sorts components by face count descending so Component #0 is always the largest.
+        Never calls mesh.split() or allocates duplicate submeshes.
+        """
         if len(mesh.faces) == 0:
             return []
         try:
             face_components = trimesh.graph.connected_components(mesh.face_adjacency)
             if len(face_components) == 0:
-                return [mesh]
-            return [mesh.submesh([c], append=True) for c in face_components]
+                face_components = [np.arange(len(mesh.faces))]
+            return sorted(face_components, key=len, reverse=True)
         except Exception as exc:
-            logger.warning("Connected component split failed: %s; falling back to single component.", exc)
-            return [mesh]
+            logger.warning("Connected components analysis failed: %s; using single component.", exc)
+            return [np.arange(len(mesh.faces))]
+
+    @classmethod
+    def _split_submeshes(cls, mesh: trimesh.Trimesh) -> list[trimesh.Trimesh]:
+        """Split mesh into connected components using face arrays without calling mesh.split()."""
+        if len(mesh.faces) == 0:
+            return []
+        comps = cls.get_face_components(mesh)
+        return [mesh.submesh([c], append=True) for c in comps]
 
     @classmethod
     def analyze(cls, mesh: trimesh.Trimesh) -> list[ComponentInfo]:
-        """Split mesh into connected components and return diagnostic metrics for each."""
+        """Split mesh into connected components and return diagnostic metrics for each.
+
+        Uses face index arrays directly without heavy submesh allocations.
+        """
         if len(mesh.faces) == 0:
             return []
 
-        submeshes = cls._split_submeshes(mesh)
+        face_components = cls.get_face_components(mesh)
+
+        try:
+            face_areas = mesh.area_faces
+        except Exception:
+            face_areas = np.zeros(len(mesh.faces), dtype=np.float64)
 
         components: list[ComponentInfo] = []
-        for idx, sub in enumerate(submeshes):
-            v_count = len(sub.vertices)
-            f_count = len(sub.faces)
+        for idx, comp in enumerate(face_components):
+            f_count = len(comp)
+            comp_faces = mesh.faces[comp]
+            unique_v = np.unique(comp_faces)
+            v_count = len(unique_v)
             if v_count > 0:
-                bb_min = tuple(float(x) for x in np.min(sub.vertices, axis=0))
-                bb_max = tuple(float(x) for x in np.max(sub.vertices, axis=0))
+                comp_verts = mesh.vertices[unique_v]
+                bb_min = tuple(float(x) for x in np.min(comp_verts, axis=0))
+                bb_max = tuple(float(x) for x in np.max(comp_verts, axis=0))
             else:
                 bb_min = (0.0, 0.0, 0.0)
                 bb_max = (0.0, 0.0, 0.0)
 
-            try:
-                area_val = float(sub.area)
-                area = area_val if not np.isnan(area_val) else 0.0
-            except Exception:
-                area = 0.0
+            area = float(np.sum(face_areas[comp])) if len(face_areas) > 0 else 0.0
 
             components.append(
                 ComponentInfo(
@@ -105,7 +124,7 @@ class MeshComponentAnalyzer:
         mesh: trimesh.Trimesh,
         config: MeshConfig,
     ) -> tuple[trimesh.Trimesh, ComponentActionResult]:
-        """Filter disconnected components based on configured strategy."""
+        """Filter disconnected components based on configured strategy using memory-safe face arrays."""
         if len(mesh.faces) == 0:
             return mesh, ComponentActionResult(
                 strategy=config.component_strategy,
@@ -116,12 +135,12 @@ class MeshComponentAnalyzer:
                 removed_vertices=0,
             )
 
-        submeshes = cls._split_submeshes(mesh)
+        face_components = cls.get_face_components(mesh)
+        total_components = len(face_components)
+        total_faces = len(mesh.faces)
 
-        total_components = len(submeshes)
         if total_components <= 1:
             return mesh, ComponentActionResult(
-
                 strategy=config.component_strategy,
                 components_before=total_components,
                 components_after=total_components,
@@ -131,74 +150,111 @@ class MeshComponentAnalyzer:
             )
 
         strategy = config.component_strategy.lower()
-        kept_submeshes: list[trimesh.Trimesh] = []
-        details: list[dict[str, Any]] = []
+        max_faces = len(face_components[0])
 
-        face_counts = [len(s.faces) for s in submeshes]
-        max_faces = max(face_counts) if face_counts else 0
+        # Component Selection Logic:
+        # Identify components with > 100,000 faces (or > 20% of total mesh faces AND >= 1,000 faces for large models).
+        large_component_indices = [
+            i for i, c in enumerate(face_components)
+            if len(c) > 100_000 or (total_faces >= 10_000 and len(c) > 0.20 * total_faces and len(c) >= 1_000)
+        ]
+        has_large_components = len(large_component_indices) > 0
 
-        areas: list[float] = []
-        for s in submeshes:
+        kept_indices: list[int] = []
+
+        if strategy == "keep_all":
+            kept_indices = list(range(total_components))
+
+        elif strategy == "largest":
+            # Component #0 is the primary object (the shoe)
+            kept_indices = [0]
+
+        elif strategy == "largest_by_area":
             try:
-                a = float(s.area)
-                areas.append(a if not np.isnan(a) else 0.0)
+                face_areas = mesh.area_faces
+                comp_areas = [float(np.sum(face_areas[c])) for c in face_components]
+                kept_indices = [int(np.argmax(comp_areas))]
             except Exception:
-                areas.append(0.0)
-        max_area = max(areas) if areas else 0.0
+                kept_indices = [0]
 
-        for idx, sub in enumerate(submeshes):
-            keep = False
-            f_count = len(sub.faces)
-            v_count = len(sub.vertices)
-            sub_area = areas[idx]
-
-            if strategy == "keep_all":
-                keep = True
-            elif strategy == "largest":
-                keep = (f_count == max_faces)
-            elif strategy == "largest_by_area":
-                keep = (sub_area == max_area)
-            elif strategy == "min_faces":
-                keep = (f_count >= config.min_component_faces)
-            elif strategy == "relative_threshold":
-                keep = (f_count >= max_faces * config.min_component_ratio)
+        elif strategy == "centroid_proximity":
+            # Component Selection Logic:
+            # - Identify components with > 100,000 faces (or > 20% of total mesh faces).
+            # - Component #0 is the primary object (the shoe).
+            # - Under NO circumstances should any component with < 1,000 faces be chosen as the target object when large components exist.
+            if config.reference_point is None:
+                # Component #0 is the primary object (the shoe)
+                best_idx = 0
             else:
-                # Default to keeping largest if unknown strategy specified
-                logger.warning("Unknown component strategy '%s'; defaulting to 'largest'.", strategy)
-                keep = (f_count == max_faces)
+                ref_pt = np.asarray(config.reference_point, dtype=np.float64)
+                if has_large_components:
+                    # When large components exist, strictly exclude any component with < 1,000 faces
+                    eligible = [i for i in large_component_indices if len(face_components[i]) >= 1_000]
+                    if not eligible:
+                        eligible = [0]
+                else:
+                    thresh = min(config.min_component_faces, max_faces)
+                    eligible = [i for i, c in enumerate(face_components) if len(c) >= thresh]
+                    if not eligible:
+                        eligible = [0]
 
-            if keep:
-                kept_submeshes.append(sub)
+                min_dist = float("inf")
+                best_idx = eligible[0]
+                for idx in eligible:
+                    comp = face_components[idx]
+                    c_faces = mesh.faces[comp]
+                    c_verts = mesh.vertices[np.unique(c_faces)]
+                    centroid = np.mean(c_verts, axis=0)
+                    if len(ref_pt) == 2:
+                        dist = float(np.linalg.norm(centroid[:2] - ref_pt))
+                    else:
+                        dist = float(np.linalg.norm(centroid - ref_pt))
+                    if dist < min_dist:
+                        min_dist = dist
+                        best_idx = idx
 
+            kept_indices = [best_idx]
+
+        elif strategy == "min_faces":
+            kept_indices = [i for i, c in enumerate(face_components) if len(c) >= config.min_component_faces]
+
+        elif strategy == "relative_threshold":
+            kept_indices = [i for i, c in enumerate(face_components) if len(c) >= max_faces * config.min_component_ratio]
+
+        else:
+            logger.warning("Unknown component strategy '%s'; defaulting to 'largest'.", strategy)
+            kept_indices = [0]
+
+        if not kept_indices:
+            logger.warning("Component filtering would remove all geometry. Preserving largest component.")
+            kept_indices = [0]
+
+        # Extract target mesh cleanly using submesh on face indices
+        if len(kept_indices) == 1:
+            target_faces = face_components[kept_indices[0]]
+        else:
+            target_faces = np.concatenate([face_components[i] for i in kept_indices])
+
+        filtered_mesh = mesh.submesh([target_faces], append=True)
+
+        # Build component details
+        details: list[dict[str, Any]] = []
+        for idx, comp in enumerate(face_components):
             details.append({
                 "index": idx,
-                "vertex_count": v_count,
-                "face_count": f_count,
-                "surface_area": round(sub_area, 4),
-                "is_kept": keep,
+                "vertex_count": len(np.unique(mesh.faces[comp])),
+                "face_count": len(comp),
+                "is_kept": (idx in kept_indices),
             })
 
-        # Safeguard: Never delete the entire mesh; if all were filtered, keep the single largest
-        if not kept_submeshes:
-            logger.warning("Component filtering would remove all geometry. Preserving largest component.")
-            largest_idx = int(np.argmax(face_counts))
-            kept_submeshes = [submeshes[largest_idx]]
-            details[largest_idx]["is_kept"] = True
-
-        # Concatenate remaining submeshes into a single clean mesh
-        if len(kept_submeshes) == 1:
-            filtered_mesh = kept_submeshes[0]
-        else:
-            filtered_mesh = trimesh.util.concatenate(kept_submeshes)
-
-        removed_components = total_components - len(kept_submeshes)
-        removed_faces = len(mesh.faces) - len(filtered_mesh.faces)
+        removed_components = total_components - len(kept_indices)
+        removed_faces = total_faces - len(filtered_mesh.faces)
         removed_vertices = len(mesh.vertices) - len(filtered_mesh.vertices)
 
         action_result = ComponentActionResult(
             strategy=strategy,
             components_before=total_components,
-            components_after=len(kept_submeshes),
+            components_after=len(kept_indices),
             removed_components=removed_components,
             removed_faces=max(0, removed_faces),
             removed_vertices=max(0, removed_vertices),
@@ -208,7 +264,7 @@ class MeshComponentAnalyzer:
         logger.info(
             "Component filtering (%s): kept %d/%d components (removed %d components, %d faces).",
             strategy,
-            len(kept_submeshes),
+            len(kept_indices),
             total_components,
             removed_components,
             removed_faces,

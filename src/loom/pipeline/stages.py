@@ -9,7 +9,6 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Generic, TypeVar
 
-from loom.capture.quality import FrameQualityAssessor, FrameQualityResult
 from loom.config.models import LoomConfig
 from loom.pipeline.artifacts import (
     BaseArtifact,
@@ -18,8 +17,6 @@ from loom.pipeline.artifacts import (
     VideoArtifact,
 )
 from loom.utils.paths import ensure_directory
-from loom.video.frames import FrameExtractor
-from loom.video.ingest import VideoIngestor
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +49,8 @@ class VideoIngestStage(PipelineStage[BaseArtifact, VideoArtifact]):
     def execute(self, input_artifact: BaseArtifact, config: LoomConfig) -> VideoArtifact:
         if config.input_video is None:
             raise ValueError("Input video path is not specified in configuration.")
+        from loom.video.ingest import VideoIngestor
+
         ingestor = VideoIngestor()
         return ingestor.ingest(config.input_video)
 
@@ -69,6 +68,8 @@ class FrameExtractionStage(PipelineStage[VideoArtifact, FrameSetArtifact]):
 
     def execute(self, input_artifact: VideoArtifact, config: LoomConfig) -> FrameSetArtifact:
         dest_dir = self._output_dir or (config.output_dir / "frames" / "raw")
+        from loom.video.frames import FrameExtractor
+
         extractor = FrameExtractor(config=config.video)
         return extractor.extract(input_artifact.video_path, dest_dir)
 
@@ -87,6 +88,8 @@ class CaptureQualityStage(PipelineStage[FrameSetArtifact, CaptureAnalysisArtifac
         self._report_dir = report_dir
 
     def execute(self, input_artifact: FrameSetArtifact, config: LoomConfig) -> CaptureAnalysisArtifact:
+        from loom.capture.quality import FrameQualityAssessor
+
         assessor = FrameQualityAssessor(config=config.capture)
         artifact, results = assessor.assess_and_filter(input_artifact.frame_paths)
 

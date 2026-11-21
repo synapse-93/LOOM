@@ -2,9 +2,9 @@
 
 **Project**: LOOM / VIDEO2PRINT  
 **Objective**: Transition an ordinary smartphone video into a metrically scaled, validated, 3D printable object (.STL) with measurable manufacturing readiness.  
-**Last Updated**: 2026-10-01  
-**Current Iteration**: 007 (Phase 4: Metric Scaling Subsystem Implementation & Synthetic Validation)  
-**Current Milestone**: Phase 4 — Metric Scaling (IMPLEMENTED & SYNTHETICALLY VERIFIED with 155 total tests; Physical Validation Pending Live Capture with ArUco Fiducial)  
+**Last Updated**: 2026-11-21  
+**Current Iteration**: 025 (Phase 1 Core Stabilization, Geometric Defect Resolution, and Repo Hygiene)  
+**Current Milestone**: Phase 1 Stabilization Complete — 248/248 Tests Passing, Zero Blocking Defects  
 
 ---
 
@@ -12,11 +12,11 @@
 
 | Dimension | Status | Notes |
 | :--- | :--- | :--- |
-| **Codebase State** | Phase 1 Complete, Phase 2 Hardened, Phase 3 Verified, Phase 4 Implemented & Tested | Ingest, quality selection, Meshroom adapter contracts, diagnostics, components, cleanup, conservative repair, normalization, full Phase 1 $\to$ 2 $\to$ 3 handoff, ArUco detection, measurement engine, scale estimator, topology-preserving transformer, scaling processor, and CLI working (155 passing tests). |
-| **Python Target** | 3.10.11 | Installed and active in `.venv` (`.venv\Scripts\python`). |
-| **Dependencies** | Phase 1, 2, 3 & 4 Active | `numpy==2.2.6`, `opencv-python==5.0.0.93` (`cv2.aruco`), `pyyaml==6.0.3`, `tqdm==4.70.1`, `trimesh==5.1.0`, `scipy==1.15.3`, `pytest==9.1.1`. Zero new third-party dependencies added. Zero heavyweight AI dependencies. |
-| **Verified Components** | Ingest, Quality, Reconstruction Adapter, Mesh Diagnostics, Cleanup, Repair, Normalization, Pipeline Handoff, ArUco Detection, Measurement Engine, Scale Estimator, Transformer, Scaling Processor | 155 passing tests verifying photogrammetric mesh processing, component selection, degenerate removal, conservative hole repair, scale calculation, topology-preserving vertex transformation, failure discrimination, and CLI execution (`scale`, `geometry`). |
-| **Active Blockers** | Meshroom Host Binary | Neither `meshroom_batch` nor `colmap` is installed on host system (`ISSUE-BLK-002`). Phase 2 live reconstruction remains blocked pending installation. |
+| **Codebase State** | Stabilized & 100% Green | Fixed `IndentationError` in `src/loom/mesh/processor.py`, hardened `CoordinateNormalizer` (full-cloud RANSAC + camera-centroid polarity + synchronous unit-normal Rodrigues $SO(3)$ rotation), verified `--PoissonMeshing.trim 0` & $<75\%$ SfM circuit breaker in `colmap.py`, added automatic `/opt/cuda/lib64` `LD_LIBRARY_PATH` prepending in `src/loom/utils/subprocess.py`, generalized `scripts/demo.py` `--target-length` default to `200.0` mm in `float64` with $Z_{\min}=0.000000$ snap, purged stray root Vite/React files, and synced `AGENTS.md`, `ARCHITECTURE.md`, `README.md`. |
+| **Runtime Environment** | Linux / Active `.venv` | Host `.venv` runs Python 3.14.9 (code remains Python 3.10+ compatible via `from __future__ import annotations`). `open3d` remains strictly optional. |
+| **Dependencies & Hardware** | Core Active | `numpy==2.5.4`, `scipy==1.18.1`, `trimesh==5.2.0`, `opencv-python==5.0.0.93`, `mapbox-earcut==2.1.0`, `pyyaml==6.0.3`, `pytest==9.2.0`. Native `COLMAP 4.2.0 (Commit be5e29168 on 2026-08-31 with CUDA)` at `/usr/bin/colmap`, NVIDIA GeForce RTX 4060 Laptop GPU (8188 MiB VRAM, Driver 615.78.08). |
+| **Verification Status** | **248 passed in 4.84s** | `.venv/bin/pytest tests/ -q` passes 100% (0 failed, 0 errors). `run_subprocess(['colmap', '-h'])` exits `0` with CUDA linker path auto-injected. |
+| **Active Blockers** | None | All Phase 1 stabilization blockers resolved. |
 
 ---
 
@@ -24,53 +24,27 @@
 
 | Pipeline Stage | Module Path | Status | Verified? |
 | :--- | :--- | :--- | :--- |
-| **0. Project Bootstrap & Scaffold** | `src/loom/`, `tests/` | **COMPLETE** | Yes (Core architecture, 65 tests passing) |
-| **1. Video Ingest & Decoding** | `src/loom/video/` | **COMPLETE** | Yes (Validation, metadata, streaming) |
-| **2. Frame Selection & Quality** | `src/loom/capture/` | **COMPLETE** | Yes (Sharpness, exposure, redundancy, guidance) |
-| **3. Reconstruction Adapter** | `src/loom/reconstruction/` | **IMPLEMENTED** | Yes (Adapter, parsing, failure discrimination verified; host binary missing) |
-| **4. Point Cloud Processing** | `src/loom/pointcloud/` | Scaffolded | Interfaces verified |
-| **5. Mesh Processing & Cleanup** | `src/loom/mesh/` | **VERIFIED** | Yes (Diagnostics, components, cleanup, conservative repair, normal unification, 49 tests passing) |
-| **6. Metric Scaling** | `src/loom/scaling/` | **IMPLEMENTED / SYNTHETICALLY VERIFIED** | Yes (ArUco detection, measurement engine, scale estimator, transformer, processor, CLI, 31 tests passing) |
-| **7. Geometry Validation** | `src/loom/validation/` | Scaffolded | Math verified (Phase 5 target) |
-| **8. Printability Analysis** | `src/loom/printability/` | Scaffolded | Reports verified (Phase 6 target) |
-| **9. Model Export** | `src/loom/export/` | Scaffolded | Manifests verified (Phase 7 target) |
+| **1. Video Ingest & Filtering** | `src/loom/video/` | **COMPLETE** | Yes (960px `INTER_AREA`, 68 turbo frames, Laplacian $\tau=18.0$) |
+| **2. Capture Quality** | `src/loom/capture/` | **COMPLETE** | Yes (Sharpness, exposure, redundancy, coverage) |
+| **3. Reconstruction Adapter** | `src/loom/reconstruction/` | **COMPLETE** | Yes (COLMAP 4.2.0 CUDA, sequential overlap 10, $<75\%$ SfM circuit breaker, Poisson depth 10 / `trim=0`) |
+| **4. Canonical Alignment & Segmentation** | `src/loom/geometry/` | **COMPLETE** | Yes (Full-cloud RANSAC 1500 iters, camera-centroid polarity, Rodrigues $SO(3)$ vertices + unit normals, cylindrical crop) |
+| **5. Mesh Processing & Repair** | `src/loom/mesh/` | **COMPLETE** | Yes (`processor.py` syntax fixed, KDTree culling, `mapbox-earcut` base cap, $>60$ edge anti-starburst guard) |
+| **6. Metric Scaling** | `src/loom/scaling/` | **COMPLETE** | Yes (ArUco DLT scaling + float64 `--target-length` default 200.0 mm + $Z_{\min}=0.0$ snap) |
+| **7. Validation & Printability Gate** | `src/loom/validation/`, `src/loom/printability/` | **COMPLETE** | Yes (AABB/OBB dims, watertight, 2-manifold, positive volume gate) |
+| **8. Binary STL Export & Subprocess** | `src/loom/export/`, `src/loom/utils/` | **COMPLETE** | Yes (Validated binary STL + manifest, `/opt/cuda/lib64` auto-prepended in `run_subprocess`) |
 
 ---
 
 ## Key Decisions in Effect
 
-- **ADR-001**: Standardize on Python 3.10.11 runtime.
-- **ADR-002**: Initial external reconstruction backend selected as Meshroom / AliceVision CLI.
-- **ADR-003**: Reconstruction backend isolated behind `ReconstructionEngine` adapter pattern.
-- **ADR-004**: Metric scaling strategy via known-size physical reference marker (ArUco).
-- **ADR-005**: Deterministic frame quality analysis via Laplacian variance, grayscale exposure, and 64x64 thumbnail difference.
-- **ADR-006**: Subprocess execution isolation, safe timeout handling, `cameras.sfm` registration parsing for Meshroom.
-- **ADR-007**: Pure NumPy/SciPy boundary loop extraction, ear-clipping hole triangulation, and BFS winding unification in Phase 3 without external graph engines or AI dependencies.
-- **ADR-008**: Strict preservation of reconstructed coordinate values and physical scale during mesh cleanup and normalization (reserving all scaling for Phase 4).
-- **ADR-009**: Deterministic metric vertex transformation formulation: $\mathbf{p}_{\text{scaled}} = \mathbf{p}_{\text{orig}} + s \cdot (\mathbf{p} - \mathbf{p}_{\text{orig}})$ with strict topology and face preservation.
+- **ADR-010 / ADR-014 / ADR-015**: COLMAP 4.2.0 CUDA dense stereo pipeline with sequential matching (`overlap=10`, `quadratic_overlap=1`, `loop_detection=1`), `min_num_pixels=3` (turbo), and `--PoissonMeshing.trim 0`.
+- **ADR-017 / ADR-018**: KDTree distance culling ($3.5 \times$ spacing), figure-8 cycle decomposition, and `float64` uniform scaling prior to binary STL export.
+- **ADR-019 / ADR-022 / ADR-023**: Full-cloud RANSAC support plane alignment, camera-centroid upward polarity check, synchronous normal rotation, depth 10 Poisson on isolated cloud, SfM $<75\%$ circuit breaker, and anti-starburst $>60$ edge hole guard.
 
-*Details in [`project/DECISIONS.md`](file:///c:/Users/adise/OneDrive/Documents/Loom/project/DECISIONS.md).*
-
----
-
-## Active Dependencies
-
-- `numpy==2.2.6`: Active (array math, vector operations, coordinate manipulation)
-- `opencv-python==5.0.0.93`: Active (video decoding, image I/O, Laplacian filtering, `cv2.aruco`)
-- `trimesh==5.1.0`: Active (mesh I/O, topology inspection, bounding box, export, transformation)
-- `scipy==1.15.3`: Active (spatial adjacency, graph components)
-- `pyyaml==6.0.3`: Active (configuration loading)
-- `tqdm==4.70.1`: Active (progress feedback)
-- `pytest==9.1.1`: Active (testing)
+*Details in [`project/DECISIONS.md`](file:///home/synapse/Documents/LOOM/project/DECISIONS.md) and [`ARCHITECTURE.md`](file:///home/synapse/Documents/LOOM/ARCHITECTURE.md).*
 
 ---
 
 ## Immediate Next Task
 
-1. Provision / configure external reconstruction tool (Meshroom / AliceVision or COLMAP) on the host system to unblock live photogrammetry (`ISSUE-BLK-002`).
-2. Execute live Phase 2 reconstruction on a real smartphone video of a physical object with an ArUco fiducial marker.
-3. Pass live reconstructed mesh through Phase 3 cleanup and Phase 4 metric scaling to physically ground scale recovery.
-4. Prepare Phase 5 (Geometry & Ground-Truth Dimensional Validation).
-
-
-
+1. Build Phase 2 API / Job Runner bridge (or run end-to-end physical caliper validation benchmark on arbitrary tabletop objects beyond footwear).

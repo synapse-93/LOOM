@@ -45,6 +45,8 @@ class ReconstructionJobConfig:
     keep_workspace: bool = True
     additional_args: list[str] = field(default_factory=list)
     extra_params: dict[str, str] = field(default_factory=dict)
+    sequential: bool = False
+    turbo: bool = False
 
 
 @dataclass(frozen=True)

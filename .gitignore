@@ -55,7 +55,11 @@ scratch/
 *.ply
 *.obj
 *.stl
+*.db
+*.bin
 *.mg
 *.blend
 src/*.egg-info/
-
+node_modules/
+dist/
+.directory

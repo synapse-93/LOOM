@@ -13,9 +13,12 @@ class MeshProcessingStage(str, Enum):
 
     VALIDATE_INPUT = "validate_input"
     DIAGNOSTICS_BEFORE = "diagnostics_before"
+    CULL_DISTANCE = "cull_point_cloud_distance"
+    REMOVE_FLOOR = "remove_floor"
     ANALYZE_COMPONENTS = "analyze_components"
     CLEAN_INVALID = "clean_invalid_geometry"
     REPAIR_DEFECTS = "repair_defects"
+    BASE_CAPPING = "base_capping"
     NORMALIZE = "normalize_mesh"
     DIAGNOSTICS_AFTER = "diagnostics_after"
     EXPORT_REPORT = "export_report"
@@ -191,6 +194,9 @@ class MeshProcessingResult:
     components_action: Optional[ComponentActionResult] = None
     cleanup_action: Optional[CleanupActionResult] = None
     repair_action: Optional[RepairActionResult] = None
+    floor_action: Optional[dict[str, Any]] = None
+    cull_action: Optional[dict[str, Any]] = None
+    base_capping_action: Optional[dict[str, Any]] = None
     warnings: list[str] = field(default_factory=list)
     error_message: Optional[str] = None
     status: str = "SUCCESS"  # 'SUCCESS', 'WARNING', 'FAILED'

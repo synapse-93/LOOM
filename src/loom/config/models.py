@@ -12,11 +12,14 @@ class VideoConfig:
     """Settings for video ingest and frame extraction."""
 
     sample_interval: int = 1
-    max_frames: int = 300
+    max_frames: int = 75
     target_fps: Optional[float] = None
     min_resolution_width: int = 1280
     min_resolution_height: int = 720
     jpeg_quality: int = 95
+    blur_threshold: float = 18.0
+    target_max_dimension: Optional[int] = 960
+    turbo: bool = False
 
 
 @dataclass
@@ -44,6 +47,7 @@ class ReconstructionConfig:
     workspace_dir: Optional[Path] = None
     keep_workspace: bool = True
     additional_args: list[str] = field(default_factory=list)
+    turbo: bool = False
 
 
 @dataclass
@@ -67,7 +71,8 @@ class MeshConfig:
     max_hole_edges: int = 30
     poisson_depth: int = 8
     target_face_count: Optional[int] = 50000
-    component_strategy: str = "largest"  # Options: 'largest', 'largest_by_area', 'min_faces', 'relative_threshold', 'keep_all'
+    component_strategy: str = "largest"  # Options: 'largest', 'largest_by_area', 'centroid_proximity', 'min_faces', 'relative_threshold', 'keep_all'
+    reference_point: Optional[tuple[float, float, float]] = None
     min_component_faces: int = 100
     min_component_ratio: float = 0.05
     remove_degenerate_faces: bool = True
@@ -75,6 +80,18 @@ class MeshConfig:
     remove_duplicate_faces: bool = True
     unify_normals: bool = True
     degenerate_area_threshold: float = 1e-7
+    floor_removal_enabled: bool = False
+    floor_normal_tolerance_deg: float = 20.0
+    floor_bottom_percentile: float = 0.15
+    floor_distance_threshold: Optional[float] = None
+    base_capping_enabled: bool = False
+    base_capping_percentile: float = 0.02
+    base_capping_z: Optional[float] = None
+    close_all_holes: bool = False
+    point_cloud_culling_enabled: bool = False
+    point_cloud_path: Optional[Path] = None
+    culling_multiplier: float = 3.5
+    turbo: bool = False
 
 
 
@@ -90,6 +107,9 @@ class ScalingConfig:
     min_observations: int = 2
     tolerance: float = 0.05
     transformation_origin: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    colmap_dir: Optional[Path] = None
+    images_dir: Optional[Path] = None
+    max_reprojection_error_px: float = 2.0
 
 
 
