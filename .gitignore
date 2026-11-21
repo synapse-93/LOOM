@@ -63,3 +63,4 @@ src/*.egg-info/
 node_modules/
 dist/
 .directory
+.directory
