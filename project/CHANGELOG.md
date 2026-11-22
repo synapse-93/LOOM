@@ -4,6 +4,200 @@ This log records chronological development iterations. Every agent completing me
 
 ---
 
+## Iteration 034 — Architectural Rewrite Phase 4 (Final): Void-Elimination 2DGS/TSDF, Guaranteed Watertight Export & `.venv312` FastAPI Worker
+- **Date**: 2026-11-22
+- **Milestone**: All 4 Architectural Rewrite Phases Complete (277/277 Tests Passing + End-to-End Watertight `box.mp4` STL Verified)
+- **Changes Implemented**:
+  - **Void-Elimination Fixes (`src/loom/reconstruction/gaussian_2dgs.py`, `src/loom/reconstruction/tsdf_mesh.py`)**:
+    - Added `scheduled_lambda_mask()` (`0.5` for steps `1..50%`, linearly decaying to `0.05` over the second half of training so multi-view RGB + normal consistency heals per-frame `isnet` mask dropouts) and `scheduled_lambda_normal()` (`0.05 -> 0.08` over the final 30% of training to flatten planar micro-ripple).
+    - Updated `TsdfExtractionConfig` to `voxel_divisor=320.0`, `trunc_voxel_multiplier=2.5`, `alpha_threshold=0.45`, and updated `mask_depth_map()` to filter background via converged 3D-consistent `render_alpha >= 0.45` (skipping noisy 2D `gt_mask` clipping when `render_alpha` is present, with configurable `21x21` dilation fallback).
+  - **Manifest `export` Contract & Stage Gate (`src/loom/pipeline/manifest.py`, `scripts/demo.py`)**:
+    - Added backward-compatible `export: dict` field (`stl_path`, `manifest_path`, `vertices`, `faces`, `is_watertight`, `is_winding_consistent`, `volume_cm3`, `extents_mm`, `z_min_mm`, `solidification_method`) and extended `invalidate_from_stage`, `--from-stage`, and `--stop-after` with `"export"` (supporting direct resume from cached `mesh_2dgs_raw.ply`).
+  - **Canonical Alignment, Taubin Polish & Guaranteed Watertight Export (`src/loom/mesh/processor.py`, `scripts/demo.py`)**:
+    - Implemented `MeshProcessor.solidify_for_print()` returning `SolidificationResult`: largest-component cleanup, Open3D Taubin smoothing (`5` iters, `lambda=0.5`, `mu=-0.53`), 2nd-percentile planar base cut & `mapbox-earcut` flat cap (`"planar_cap"`), Tier 1 hole fill + winding/normal repair (`"hole_fill"`), Tier 2 Open3D Screened Poisson (`depth=9, scale=1.25`) / high-res `180`-voxel + Taubin + flat base cap watertight guarantee (`"voxel_remesh"`), Open3D quadric decimation (`>200k -> 150k` faces, kept only if `PrintabilityGate` holds), uniform `float64` scaling to `--target-length`, `Z_min = 0.000 mm`, X/Y centering, and `PrintabilityGate`-enforced binary `<workspace>/loom_output.stl` + `<workspace>/printability_manifest.json` export.
+  - **FastAPI Worker Integration (`src/loom/web/manager.py`, `scripts/serve_worker.py`)**:
+    - Updated `infer_stage_and_progress()` to track `[MASK]`, `[VISUAL_HULL]`, `[2DGS] Step X/Y`, `[TSDF]`, and `[EXPORT]` / `PrintabilityGate` markers across `0–100%`.
+    - Wired `manager.py` to launch `scripts/demo.py` via `sys.executable` with `--engine 2dgs --export-stl` and resolve `<workspace>/loom_output.stl` & `<workspace>/printability_manifest.json` cleanly in `_discover_artifacts()`.
+  - **Unit Tests**:
+    - Added `tests/unit/mesh/test_watertight_solidification.py` (open-bottom + side-hole box and open-bottom cylinder solidification tests).
+    - Updated `tests/unit/reconstruction/test_tsdf_mesh.py`, `test_gaussian_2dgs.py`, and `tests/unit/web/test_api.py`.
+- **Verification**:
+  - `.venv312/bin/pytest tests/ -q`: **276 passed, 1 skipped** (sandboxed) + `test_gsplat_153_cuda_shape_smoke PASSED` on RTX 4060 (**277/277 total**).
+  - Full-resolution (`540×960`, `turbo=False`) end-to-end exit gate on `/home/synapse/Downloads/box.mp4` (`outputs/rewrite_box_test`):
+    - 2DGS (7,000 iters, 60 valid views, void-elimination schedules): `11,281 -> 77,986` surfels, `final_loss = 0.1000`, **peak VRAM `298.2 MiB`**.
+    - TSDF (`voxel_divisor=320`, `trunc=2.5`, `alpha>=0.45`): **`455,305` verts / `877,533` faces** (`tight_radius = 2.1855`, `voxel_length = 0.006830`) in `4.55s`.
+    - Export (`loom_output.stl` + `printability_manifest.json`): **`95,173` verts / `192,902` faces**, `solidification_method = "voxel_remesh"`, **`PrintabilityGate PASSED`** (`is_watertight = True`, `is_manifold = True`, `0` boundary edges, `0` non-manifold edges/verts, `volume = 56.62 cm³`, `extents = [154.919, 200.000, 85.948] mm`, `Z_min = 0.000000 mm`, exact `9,645,184` bytes = `84 + 50 * 192902`).
+
+---
+
+## Iteration 033 — Architectural Rewrite Phase 3: DBSCAN Visual-Hull Core, Manifest-Driven 2DGS (`gsplat 1.5.3`) & Tight Sparse TSDF
+- **Date**: 2026-11-22
+- **Milestone**: Rewrite Phase 3 Complete (275/275 Tests Passing + Full-Res `box.mp4` 2DGS + TSDF Exit Gate Visually Verified)
+- **Changes Implemented**:
+  - **Visual-Hull Core Tightening (`src/loom/reconstruction/visual_hull.py`)**:
+    - Raised multi-view visibility gate to `max(8, int(0.20 * num_valid_views))` (fallback `5`).
+    - Added `compute_camera_lookat_center()` (least-squares optical-axis convergence center) and Open3D `cluster_dbscan` core selection (`eps = 0.08 * scene_radius`, `min_points = 15`, selecting largest dense cluster `>= 200` pts closest to look-at center, with `median + 2.0 * MAD` fallback) plus `read_colored_ply()`.
+  - **Manifest Contracts & Stage Invalidation (`src/loom/pipeline/manifest.py`, `scripts/demo.py`)**:
+    - Extended `PipelineManifest` with `gaussian_2dgs: dict`, `tsdf: dict`, and `invalidate_from_stage(stage)`.
+    - Wired `--from-stage {frames,sfm,undistort,mask,visual_hull,2dgs,tsdf}` and extended `--stop-after` to `{sfm,mask,visual_hull,2dgs,tsdf}` in `scripts/demo.py` with clean stage-resume reuse for `mask` and `visual_hull`.
+  - **Rewrote Masked 2DGS Optimizer (`src/loom/reconstruction/gaussian_2dgs.py`)**:
+    - Consumes `valid_views`, `debug_masks/visual_hull_points.ply`, `object_center`, and `object_radius` directly from `pipeline_manifest.json`.
+    - Fixed two critical `gsplat 1.5.3` bugs caught by the Phase 3 visual audit:
+      1. `info["means2d"].grad` is identically `0.0` in `rasterization_2dgs`; switched densification accumulation to `info["gradient_2dgs"].grad` with NDC screen-space scaling (`width/2`, `height/2`) over visible surfels `sel = (info["radii"] > 0.0).all(dim=-1)`.
+      2. `gsplat 1.5.3` computes L1 world-space distortion (`render_distort`), NOT Inria's squared NDC distortion; `lambda_dist = 100.0` caused a 106× loss spike (`4.836`) at step 1500 that collapsed surfels from `11,030 -> 68`. Set `lambda_dist = 0.01` (foreground-masked), kept `lambda_normal = 0.05` (empirically verified `cos(render_normals, surf_normals) == +1.0`), added in-place parent scale shrinkage on split, prioritized highest-gradient cloning/splitting under `max_gaussians = 150,000`, set `opacity_reset_interval = 3000` with a 1-interval post-reset prune cooldown, and added exponential `lr_means` decay (`1.6e-4 -> 1.6e-6 * object_radius`).
+    - Upgraded `compose_debug_panel()` and `save_debug_renders()` to 4-panel convergence strips (`<workspace>/debug_2dgs/view_{0,mid,last}.png`: `[GT Masked RGB | Rendered RGB | Colorized Median Depth | Rendered Normals]`).
+  - **Rewrote Tight Sparse TSDF Extractor (`src/loom/reconstruction/tsdf_mesh.py`)**:
+    - Computes tight surfel bounding sphere from `opacity > 0.35` surfels via DBSCAN + 5th–95th percentile trimming clamped to `<= 1.35 * object_radius`.
+    - Sets `voxel_length = max(tight_radius / 256.0, 1e-4)`, `sdf_trunc = 3.0 * voxel_length`, depth clip `[0.05, cam_dist + 1.5 * tight_radius]`, logs View 0 Z-depth audit (`min/median/max/cam_dist`), integrates via Open3D `VoxelBlockGrid` (CPU), keeps largest connected component, and writes `<workspace>/mesh_2dgs_raw.ply` + `tsdf` manifest telemetry.
+  - **Unit & CUDA Smoke Tests (`tests/unit/reconstruction/test_visual_hull.py`, `test_gaussian_2dgs.py`, `test_tsdf_mesh.py`)**:
+    - Added DBSCAN fringe-cluster pruning test, updated 4-panel and `min_opacity=0.35` tests, and added real RTX 4060 `test_gsplat_153_cuda_shape_smoke` verifying `info["gradient_2dgs"].grad.abs().sum() > 0`.
+- **Verification**:
+  - `.venv312/bin/pytest tests/ -q`: **274 passed, 1 skipped** (sandboxed) + `test_gsplat_153_cuda_shape_smoke PASSED` on RTX 4060 (**275/275 total**).
+  - Full-resolution (`540×960`, `turbo=False`) real-video exit gate on `/home/synapse/Downloads/box.mp4` (`outputs/rewrite_box_test`, `--from-stage 2dgs --stop-after tsdf`):
+    - Visual Hull (DBSCAN, `vis>=12`, `ratio>=0.70`): `20,002 -> 11,281` core points, `object_radius = 1.8612` vs `scene_radius = 3.8784`.
+    - 2DGS (7,000 iters, 60 valid views): `11,281 -> 79,044` surfels, loss down to `0.0150` at step 6500 (`0.1378` on step 7000 view), **peak VRAM = 297.2 MiB**, `284.66s`.
+    - Visual Audit (`debug_2dgs/view_{0,mid,last}.png`): legible fine print on box walls, smooth planar depth & normals, multi-view rejection of leaked background cloth in `view_mid.png` and mask-hole completion in `view_last.png`.
+    - Sparse TSDF (`VoxelBlockGrid` CPU, 60 views): `tight_radius = 2.1901`, `voxel_length = 0.008555`, `sdf_trunc = 0.025665`, **293,020 vertices / 563,954 faces**, `extents = [1.7390, 3.6068, 3.0713]` in **3.12s** -> `outputs/rewrite_box_test/mesh_2dgs_raw.ply`.
+
+---
+
+## Iteration 032 — Architectural Rewrite Phase 2: Memory-Safe Masking, Visual-Hull Filter & Visual Audit Gates
+- **Date**: 2026-11-22
+- **Milestone**: Rewrite Phase 2 Complete (273/273 Tests Passing + Full-Res `box.mp4` Visual-Hull Gate Verified)
+- **Changes Implemented**:
+  - **Extended `PipelineManifest` (`src/loom/pipeline/manifest.py`)**: Added backward-compatible `masking: dict` and `visual_hull: dict` fields recording valid/excluded views, median coverage, contact sheet path, foreground point count, ratio threshold used, `object_center`, `object_radius`, `scene_radius`, and `filtered_ply_path`.
+  - **Hardened `ForegroundMasker` (`src/loom/reconstruction/masking.py`)**:
+    - Enforced `isnet-general-use` default with bounded CPU ONNX `SessionOptions` (`enable_cpu_mem_arena=False`, `enable_mem_pattern=False`, `intra_op_num_threads=4`, `inter_op_num_threads=1`, `CPUExecutionProvider`), disk resume, periodic `gc.collect()`, and `close()`.
+    - Added view hygiene classification (`0.02 <= coverage <= 0.95` valid vs `empty_or_tiny` / `over_segmented` excluded) with `< 20` valid-view circuit breaker (`>= 60%` when total views `< 20`).
+    - Added `build_mask_contact_sheet()` generating a 4×4 `debug_masks/masks_grid.jpg` audit sheet with `#10B981` green contours on valid views and red borders + `"EXCLUDED (X.X%)"` tags on up to 4 excluded views.
+  - **Created `VisualHullFilter` (`src/loom/reconstruction/visual_hull.py`)**:
+    - Strictly loads undistorted `PINHOLE` cameras, poses, and 3D points from `dense/sparse/{cameras,images,points3D}.bin`.
+    - Performs true multi-view silhouette intersection (`visible_count >= 5`, `fg_hits / visible_count >= 0.70`, adaptive fallback `0.55 -> 0.40` if `< 500` survive) + `median + 2.5 * MAD` outlier pruning.
+    - Computes tight `object_center`, `object_radius` (95th percentile), and `scene_radius`, exporting `<workspace>/debug_masks/visual_hull_points.ply`.
+  - **Stage Gate Integration (`scripts/demo.py`)**: Added `--stop-after {sfm,mask,visual_hull}` (preserving `--sfm-only` alias), wired `ForegroundMasker` -> `masker.close()` -> `VisualHullFilter` -> manifest persistence, and printed Phase 2 summary telemetry.
+  - **Unit Tests (`tests/unit/reconstruction/test_masking.py`, `test_visual_hull.py`)**: Added tests for view hygiene, `< 20` circuit breaker, 4×4 contact sheet generation, and multi-view `>= 70%` background wall rejection.
+- **Verification**:
+  - `.venv312/bin/pytest tests/ -q`: **273 passed, 2 warnings in 9.43s** (0 failures, 0 errors).
+  - Full-resolution (`540×960`, `turbo=False`) real-video exit gate on `/home/synapse/Downloads/box.mp4` (`outputs/rewrite_box_test`):
+    - Cache invalidation cleanly purged previous 720p turbo cache on `turbo: True -> False`.
+    - SfM: **74 / 74 views (100.0%)**, `num_cameras = 1`, **20,002 sparse points**.
+    - Masking (`isnet-general-use`, zero OOM): **60 / 74 valid views**, 14 excluded (`empty_or_tiny`), median coverage **33.9%**, `masks_grid.jpg` generated.
+    - Visual Hull: **20,002 → 11,306 foreground points** (`ratio >= 0.70` in `0.16s`), `object_radius = 1.8607` vs `scene_radius = 3.8789`, `visual_hull_points.ply` exported.
+    - Total turnaround: **120.49s**.
+
+---
+
+## Iteration 031 — Architectural Rewrite Phase 1: Pipeline Manifest, Cache Hygiene & Hardened Single-Camera COLMAP SfM
+- **Date**: 2026-11-22
+- **Milestone**: Rewrite Phase 1 Complete (271/271 Tests Passing + `box.mp4` 67/67 Single-Camera Exit Gate)
+- **Changes Implemented**:
+  - **Typed Pipeline Manifest & Cache Hygiene (`src/loom/pipeline/manifest.py`, `src/loom/pipeline/__init__.py`)**:
+    - Added `@dataclass PipelineManifest` persisted atomically to `<workspace>/pipeline_manifest.json` (`video_path`, fast head/tail 1 MB `video_sha256`, `engine`, `turbo`, `frame_resolution`, `sfm` metrics dict, `stages_completed`).
+    - Implemented `prepare_workspace()` automatically purging stale `extracted_frames/`, `images/`, `database.db`, `sparse/`, `dense/`, `masks/`, and `debug_*` whenever `pipeline_manifest.json` is missing, `video_sha256` changes, `turbo` flips, or on-disk frame resolution mismatches `frame_resolution`; resumes completed stages safely when hashes and resolutions match.
+  - **Hardened Single-Camera COLMAP Sparse SfM (`src/loom/reconstruction/colmap.py`)**:
+    - Locked `feature_extractor` to `--ImageReader.camera_model SIMPLE_RADIAL`, `--ImageReader.single_camera 1`, `--SiftExtraction.peak_threshold 0.004`, `--SiftExtraction.max_num_features 8192`, `--FeatureExtraction.use_gpu 1 --FeatureExtraction.gpu_index <gpu_index>`.
+    - Implemented adaptive GPU matching: `exhaustive_matcher` (`--FeatureMatching.use_gpu 1`) when `num_images <= 120`, falling back to `sequential_matcher` (`overlap=10`, `quadratic_overlap=1`, `loop_detection=1`) only when `num_images > 120`.
+    - Added `select_largest_sparse_model()` scanning all numeric `sparse/*` subdirectories, picking max registered views, asserting `num_cameras == 1` (logging loud warning on violation), and routing the winning model to the `< 75%` SfM circuit breaker and `image_undistorter`.
+    - Added `extract_sparse_scene_metadata()` exposing unmasked sparse points and camera centers from the winning model for Phase 2/4 reuse.
+  - **Orchestrator Wiring & Banner (`scripts/demo.py`)**:
+    - Wired `prepare_workspace()`, `"frames"`/`"sfm"`/`"undistort"` manifest recording, optional `--sfm-only` gate flag, and accurate `Engine: Masked 2DGS + TSDF` startup banner.
+  - **Unit Tests (`tests/unit/pipeline/test_manifest.py`, `tests/unit/reconstruction/test_colmap_adapter.py`)**:
+    - Added cache wipe/resume tests, optical-lock flag assertions, adaptive `<= 120` vs `> 120` matcher routing, and multi-model `sparse/*` winner selection tests.
+- **Verification**:
+  - `.venv312/bin/pytest tests/ -q`: **271 passed, 2 warnings in 11.98s** (0 failures, 0 errors).
+  - Live `box.mp4` SfM-only verification (`outputs/rewrite_box_test`): **67 / 67 views (100.0%)**, **`num_cameras = 1`**, **11,205 sparse points**, `frame_resolution = [405, 720]`, total **23.78s** (Frames: 4.64s, SfM: 18.86s, Undistort: 0.27s).
+
+---
+
+## Iteration 030 — Visual-Hull Point Filtering, Tight Object TSDF Bounds & 2DGS Diagnostic Renders
+- **Date**: 2026-11-22
+- **Milestone**: 2DGS Geometry Precision & Diagnostic Tooling (267/267 Tests Passing)
+- **Root Cause**:
+  - Previous sparse point filter (`fg_hits >= 2`) retained 99.4% of background room points that briefly passed behind the object mask, inflating `scene_radius` ~7.6x (`3.947` vs actual object `~0.52`), overshooting `lr_means` ~10x, and making TSDF voxels ~15x too coarse.
+- **Changes Implemented**:
+  - **True Multi-View Visual-Hull Filter (`src/loom/reconstruction/gaussian_2dgs.py`)**:
+    - Projects sparse 3D points across all valid-mask cameras (`2% <= coverage <= 95%`), retaining points with `visible_count >= 5` AND `fg_hits / visible_count >= 0.70` (iteratively relaxing to `0.55`, then `0.40` if `< 500` points survive).
+    - Computes `object_center` (median) and `object_radius` (95th percentile distance from median) strictly from filtered foreground points and scales `lr_means` and surfel split/prune thresholds by `object_radius`.
+  - **Tight High-Opacity TSDF Bounding Sphere (`src/loom/reconstruction/tsdf_mesh.py`, `gaussian_2dgs.py`)**:
+    - Computes TSDF `bounding_center`/`bounding_radius` strictly from high-opacity surfels (`opacity > 0.3`) with 5th–95th percentile trimming, clamped to `<= 1.5 * object_radius`.
+    - Sets `voxel_length = bounding_radius / 256.0` and `sdf_trunc = 3.0 * voxel_length`, uses `depth_mode="median"`, and logs View 0 non-zero camera-space Z-depth `min / median / max` before integration.
+  - **Diagnostic Convergence Renders (`src/loom/reconstruction/gaussian_2dgs.py`, `scripts/demo.py`)**:
+    - Added `compose_debug_panel()` and `Gaussian2DGSReconstructor.save_debug_renders()` exporting `<workspace>/debug_2dgs/{view_0,view_mid,view_last}.png` (`[GT Masked RGB | Rendered 2DGS RGB | 2DGS Median Depth]`).
+  - **Tests (`tests/unit/reconstruction/test_gaussian_2dgs.py`, `test_tsdf_mesh.py`)**:
+    - Updated tests for `>= 70%` visual-hull filtering, `0.70 -> 0.55` relaxation, `compose_debug_panel`, `opacity > 0.3` + `max_radius` clamping, and `sdf_trunc = 3.0 * voxel_length`.
+- **Verification**:
+  - `.venv312/bin/pytest tests/ -q`: **267 passed** (0 failures, 0 errors).
+
+---
+
+## Iteration 029 — Fix `gsplat 1.5.3` `rasterization_2dgs` Tensor Shape Crash & Empty-Mask View Guard
+- **Date**: 2026-11-22
+- **Milestone**: Live RTX 4060 `gsplat 1.5.3` Compatibility & View Filtering Verified (266/266 Tests Passing)
+- **Root Cause**:
+  - Inspected `gsplat==1.5.3`'s `rasterization_2dgs` source and empirically tested on RTX 4060: `packed=True` is broken upstream in `gsplat 1.5.3` (lines 254–262 broadcast `shs` to `(1, N, K, 3)` without indexing by `[camera_ids, gaussian_ids]`, raising `AssertionError: torch.Size([1, N, 9, 3])`, and lines 234–244 for `sh_degree=None` are commented out).
+  - Additionally, `gsplat 1.5.3` returns `surf_normals` with 3D shape `(H, W, 3)` (no leading camera dim), which would have sliced to `(W, 3)` at step 1500.
+- **Changes Implemented**:
+  - Updated `Gaussian2DGSConfig.packed` default to `False` (`src/loom/reconstruction/gaussian_2dgs.py`, `scripts/demo.py`); for single-camera (`C=1`) steps on $\le 150,000$ surfels, `packed=False` uses ~6 MB and keeps all tensors cleanly aligned.
+  - Added ndim-safe unpacking (`ndim == 4` check) for `render_normals`, `surf_normals`, and `render_distort`.
+  - Added corrupted/empty mask filtering in `Gaussian2DGSReconstructor.load_training_views()`: excludes views with mask foreground coverage `< 2%` or `> 95%` (with a safety fallback keeping all views if `< 20` valid views remain), protecting both 2DGS training and TSDF fusion.
+  - Added unit test `test_load_training_views_excludes_abnormal_masks_with_20_view_fallback` in `tests/unit/reconstruction/test_gaussian_2dgs.py`.
+- **Verification**:
+  - Live RTX 4060 CUDA smoke test (`gsplat 1.5.3`, `N=100`, `step=1600` normal + distortion + backward + `means2d.grad`): PASSED.
+  - `.venv312/bin/pytest tests/ -q`: **266 passed** (0 failures, 0 errors).
+
+---
+
+## Iteration 028 — Fix CPU OOM Kill in `ForegroundMasker` (`src/loom/reconstruction/masking.py`)
+- **Date**: 2026-11-22
+- **Milestone**: Masked 2DGS Pipeline Memory Hardening (265/265 Tests Passing)
+- **Changes Implemented**:
+  - Changed default `ForegroundMasker.model_name` from `"birefnet-general"` (973 MB ONNX) to `"isnet-general-use"` while keeping `model_name` configurable (e.g. `"birefnet-general-lite"`).
+  - Configured explicit bounded `onnxruntime.SessionOptions()` (`enable_cpu_mem_arena=False`, `enable_mem_pattern=False`, `intra_op_num_threads=4`, `inter_op_num_threads=1`) with `providers=["CPUExecutionProvider"]` in `rembg.new_session(...)`.
+  - Added disk-resume skip when output mask PNG already exists in `output_dir`, periodic `gc.collect()` every 10 frames, and explicit `ForegroundMasker.close()` releasing `self._session = None` + `gc.collect()` after `mask_directory()` and in `scripts/demo.py` (`try/finally`).
+  - Added unit test `test_foreground_masker_default_model_resume_and_onnx_session_options` in `tests/unit/reconstruction/test_masking.py`.
+- **Verification**:
+  - `.venv312/bin/pytest tests/ -q`: **265 passed** (0 failures, 0 errors).
+
+---
+
+## Iteration 027 — Masked 2D Gaussian Splatting (2DGS) + BiRefNet + Sparse TSDF Engine (`.venv312`)
+- **Date**: 2026-11-22
+- **Milestone**: Masked 2DGS + TSDF Reconstruction Engine Complete (264/264 Tests Passing)
+- **Changes Implemented**:
+  - Created Python 3.12 CUDA environment `.venv312` (`uv`, CPython 3.12.16) with `torch 2.14.1+cu130`, `gsplat 1.5.3`, `rembg`, `open3d 0.20.0`, `trimesh`, `scipy`, `numpy`, `opencv-python`, `mapbox-earcut`, `fastapi`, `uvicorn`, `httpx`, and `pytest`. Added `.venv312/` to `.gitignore`.
+  - Created `src/loom/reconstruction/masking.py` (`ForegroundMasker`, `postprocess_alpha_mask`): single-session `birefnet-general` masking on undistorted `dense/images/`, alpha thresholding ($\ge 128$), `3x3` morphological open/close, central primary connected-component retention ($<1\%$ islands pruned), and abnormal coverage warnings ($<2\%$ or $>90\%$).
+  - Created `src/loom/reconstruction/gaussian_2dgs.py` (`Gaussian2DGSReconstructor`, `Gaussian2DGSConfig`, `compute_2dgs_loss`, `filter_sparse_points_by_masks`): COLMAP `points3D.bin`/`.txt` parsing, multi-view mask projection filtering ($\ge 2$ views), `gsplat.rasterization_2dgs(render_mode="RGB+ED", distloss=True, packed=True)`, random black/white background compositing, composite photometric + silhouette + post-1500 normal/distortion loss, adaptive densification/pruning capped at `150,000` surfels, `960px`/`720px` VRAM cap, `7000`/`3500` iterations, and structured `[2DGS] Step X/Y` logs.
+  - Created `src/loom/reconstruction/tsdf_mesh.py` (`TsdfMeshExtractor`): renders masked median depth + RGB maps (`gt_mask == 0` or `render_alphas < 0.5` zeroed), computes adaptive 2nd–98th percentile foreground sphere ($v = R/256$, $\tau = 4v$), and fuses via Open3D's CPU sparse `o3d.t.geometry.VoxelBlockGrid` (resolving an upstream Open3D `0.20.0` regression where legacy `ScalableTSDFVolume.extract_triangle_mesh()` returned 0 triangles even on canonical `PrimeSenseDefault` depth maps).
+  - Integrated `--engine {2dgs,colmap}` (default `2dgs`) into `scripts/demo.py` and added `[MASK]` / `[2DGS]` / `[TSDF]` SSE progress parsing into `src/loom/web/manager.py`.
+  - Added fast CPU unit tests: `tests/unit/reconstruction/test_masking.py`, `tests/unit/reconstruction/test_tsdf_mesh.py`, `tests/unit/reconstruction/test_gaussian_2dgs.py`, and SSE 2DGS progress test in `tests/unit/web/test_api.py`.
+  - Updated `ARCHITECTURE.md` and `project/CONTEXT.md`.
+- **Verification**:
+  - `.venv312/bin/pytest tests/ -q`: **264 passed** (0 failures, 0 errors).
+  - Verified `scripts/process_bottle.py`, `scripts/lock_master_stl.py`, `data/`, and `outputs/stl/` remained untouched.
+
+---
+
+## Iteration 026 — Phase 2 Track A: FastAPI Local GPU Worker & Live Vercel Bridge (`src/loom/web/`)
+- **Date**: 2026-11-22
+- **Milestone**: Phase 2 Track A Complete (Local RTX 4060 GPU Worker + SSE Bridge)
+- **Changes Implemented**:
+  - Installed `fastapi==0.165.0`, `uvicorn[standard]==0.54.0`, `python-multipart==0.0.34`, and `httpx==0.28.1` into existing `.venv`.
+  - Created `src/loom/web/models.py`: typed Pydantic v2 models (`JobStatus`, `HealthResponse`, `JobCreateResponse`, `JobSummary`).
+  - Created `src/loom/web/manager.py`: `ReconstructionJobManager` implementing:
+    - 1 MB streaming disk ingest to `outputs/web_jobs/<job_id>/input<ext>` with extension (`{.mp4, .webm, .mov}`) and 500 MB size validation.
+    - Optional `ffmpeg` `.webm` remux/transcode (`libx264 -preset fast -crf 18 -an`) with graceful fallback when `ffmpeg` is absent.
+    - Strict single-GPU 1-job-at-a-time FIFO worker via `asyncio.Queue` spawning `scripts/demo.py` with `--stl-dir <job_dir>/stl` and `_build_subprocess_env()` CUDA linker inheritance.
+    - Bounded 2000-line log ring buffer, monotonic 8-stage progress inference, live SSE fan-out (`event: log`, `event: progress`, 15s heartbeats, `event: done`), and clean subprocess cancellation (`terminate()` -> 5s -> `kill()`).
+  - Created `src/loom/web/app.py`: FastAPI application with Vercel CORS (`https://loomvidcapture.vercel.app`, `localhost:5173`, `https://.*\.vercel\.app`) and all 8 endpoints (`/health`, `/api/reconstruct`, `/api/jobs`, `/api/jobs/{job_id}`, `/api/jobs/{job_id}/stream`, `/api/jobs/{job_id}/stl`, `/api/jobs/{job_id}/manifest`, `DELETE /api/jobs/{job_id}`).
+  - Created executable launcher `scripts/serve_worker.py` (`--host`, `--port`, Cloudflare HTTPS tunnel command instructions).
+  - Added unit test suite `tests/unit/web/test_api.py` covering `/health` + CORS, upload validation (`400`/`413`/`202`), strict FIFO serialization, SSE live streaming, binary STL + manifest downloads, active cancellation, `.webm` fallback, and error log capture.
+  - Updated `ARCHITECTURE.md` and `project/CONTEXT.md`.
+- **Verification**:
+  - `.venv/bin/pytest tests/ -q`: **253 passed** (248 existing + 5 web API tests; web tests run in < 1s without calling real COLMAP).
+  - Verified `scripts/process_bottle.py`, `scripts/lock_master_stl.py`, `data/`, and `outputs/stl/` remained untouched.
+
+---
+
 ## Iteration 025 — Phase 1 Core Stabilization, Geometric Defect Resolution & Repo Hygiene
 - **Date**: 2026-11-21
 - **Milestone**: Phase 1 Core Stabilization Complete (248/248 Tests Passing)

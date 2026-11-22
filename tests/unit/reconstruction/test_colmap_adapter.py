@@ -736,11 +736,11 @@ def test_reconstruct_uses_sequential_matching_when_flagged(
     mock_dataset: tuple[Path, Path],
     tmp_path: Path,
 ) -> None:
-    """Verify reconstruct() routes matching to sequential_matcher when sequential is set."""
+    """Verify reconstruct() routes <=120 frames to exhaustive_matcher and >120 frames to sequential_matcher."""
     from loom.reconstruction.models import ReconstructionJobConfig
 
     img_dir, _ = mock_dataset
-    frames = sorted(img_dir.glob("*.png"))
+    frames = sorted(img_dir.glob("*.png"))  # 3 frames (<= 120)
     workspace = tmp_path / "sfm_ws"
 
     adapter = ColmapAdapter(binary_path=dummy_binary)
@@ -758,17 +758,83 @@ def test_reconstruct_uses_sequential_matching_when_flagged(
         adapter.reconstruct(frames, job_cfg)
 
         assert mock_match.called
-        assert mock_match.call_args.kwargs["sequential"] is True
+        assert mock_match.call_args.kwargs["num_images"] == 3
+        assert mock_match.call_args.kwargs["sequential"] is False
         assert mock_map.called
         assert mock_map.call_args.kwargs["num_threads"] == 16
         assert mock_map.call_args.kwargs["ba_global_max_num_iterations"] == 20
+
+
+def test_feature_extractor_optical_lock_and_adaptive_matching_routing(
+    dummy_binary: Path,
+    tmp_path: Path,
+) -> None:
+    """Verify single_camera=1, SIMPLE_RADIAL, peak_threshold=0.004, and <=120 exhaustive vs >120 sequential."""
+    db_path = tmp_path / "database.db"
+    img_dir = tmp_path / "images"
+    img_dir.mkdir()
+
+    fe_args = ColmapAdapter.build_feature_extractor_args(
+        binary_path=dummy_binary,
+        database_path=db_path,
+        image_path=img_dir,
+        gpu_index=0,
+    )
+    assert fe_args[1] == "feature_extractor"
+    assert fe_args[fe_args.index("--ImageReader.camera_model") + 1] == "SIMPLE_RADIAL"
+    assert fe_args[fe_args.index("--ImageReader.single_camera") + 1] == "1"
+    assert fe_args[fe_args.index("--SiftExtraction.peak_threshold") + 1] == "0.004"
+    assert fe_args[fe_args.index("--SiftExtraction.max_num_features") + 1] == "8192"
+    assert fe_args[fe_args.index("--FeatureExtraction.use_gpu") + 1] == "1"
+    assert fe_args[fe_args.index("--FeatureExtraction.gpu_index") + 1] == "0"
+
+    adapter = ColmapAdapter(binary_path=dummy_binary)
+    executed: list[list[str]] = []
+
+    def _capture(cmd, **kwargs):
+        executed.append(list(cmd))
+        return MagicMock(returncode=0)
+
+    with patch("loom.reconstruction.colmap.run_subprocess", side_effect=_capture):
+        # <= 120 images -> GPU exhaustive_matcher
+        adapter.run_matching(database_path=db_path, num_images=80, gpu_index=0)
+        assert executed[-1][1] == "exhaustive_matcher"
+        assert executed[-1][executed[-1].index("--FeatureMatching.use_gpu") + 1] == "1"
+        assert executed[-1][executed[-1].index("--FeatureMatching.gpu_index") + 1] == "0"
+
+        # > 120 images -> sequential_matcher fallback (overlap=10, quadratic_overlap=1, loop_detection=1)
+        adapter.run_matching(database_path=db_path, num_images=150, gpu_index=0)
+        assert executed[-1][1] == "sequential_matcher"
+        assert executed[-1][executed[-1].index("--SequentialMatching.overlap") + 1] == "10"
+        assert executed[-1][executed[-1].index("--SequentialMatching.quadratic_overlap") + 1] == "1"
+        assert executed[-1][executed[-1].index("--SequentialMatching.loop_detection") + 1] == "1"
+
+
+def test_select_largest_sparse_model_picks_max_registered_views(tmp_path: Path) -> None:
+    """Verify select_largest_sparse_model scans sparse/0, sparse/1, sparse/2 and selects max views."""
+    import struct
+
+    sparse_root = tmp_path / "sparse"
+    for idx, (reg, cams, pts) in {0: (14, 1, 2000), 1: (66, 1, 14500), 2: (9, 2, 800)}.items():
+        d = sparse_root / str(idx)
+        d.mkdir(parents=True)
+        (d / "images.bin").write_bytes(struct.pack("<Q", reg))
+        (d / "cameras.bin").write_bytes(struct.pack("<Q", cams))
+        (d / "points3D.bin").write_bytes(struct.pack("<Q", pts))
+
+    winner = ColmapAdapter.select_largest_sparse_model(sparse_root)
+    assert winner.model_dir == (sparse_root / "1").resolve()
+    assert winner.registered_views == 66
+    assert winner.num_cameras == 1
+    assert winner.sparse_points == 14500
+    assert ColmapAdapter.resolve_sparse_model_dir(sparse_root) == (sparse_root / "1").resolve()
 
 
 def test_demo_video_passes_sequential_matching(
     dummy_binary: Path,
     tmp_path: Path,
 ) -> None:
-    """Verify scripts/demo.py automatically passes sequential=True when video is provided."""
+    """Verify scripts/demo.py invokes adaptive GPU matching (exhaustive for <=120 frames) and writes manifest."""
     from loom.video.frames import FrameSetArtifact, FrameExtractor
     from loom.reconstruction.models import ReconstructionJobConfig
 
@@ -787,10 +853,6 @@ def test_demo_video_passes_sequential_matching(
         total_extracted=1,
     )
 
-    sparse_out = tmp_path / "workspace" / "sparse" / "0"
-    sparse_out.mkdir(parents=True, exist_ok=True)
-    (sparse_out / "cameras.bin").write_bytes(b"cameras")
-
     with patch.object(FrameExtractor, "extract", return_value=mock_artifact), patch.object(ColmapAdapter, "reconstruct") as mock_recon, patch.object(ColmapAdapter, "reconstruct_sparse_mesh"):
         run_demo(
             dense=False,
@@ -803,8 +865,9 @@ def test_demo_video_passes_sequential_matching(
 
         assert mock_recon.called
         passed_job_cfg: ReconstructionJobConfig = mock_recon.call_args[0][1]
-        assert passed_job_cfg.sequential is True
-        assert passed_job_cfg.extra_params["matching_mode"] == "sequential"
+        assert passed_job_cfg.sequential is False
+        assert passed_job_cfg.extra_params["matching_mode"] == "exhaustive"
+        assert (tmp_path / "demo_out" / "pipeline_manifest.json").is_file()
 
 
 def test_demo_mesh_only_bypasses_colmap_and_runs_downstream(tmp_path: Path) -> None:

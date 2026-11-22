@@ -53,6 +53,29 @@ class ColmapSparseArtifact(ReconstructionArtifact):
     delaunay_mesh_path: Optional[Path] = None
 
 
+@dataclass(frozen=True)
+class SparseModelInfo:
+    """Parsed header counts for a COLMAP sparse model subdirectory."""
+
+    model_dir: Path
+    registered_views: int
+    num_cameras: int
+    sparse_points: int
+
+
+@dataclass(frozen=True)
+class SparseSceneMetadata:
+    """Reusable unmasked sparse point cloud and camera centers from winning COLMAP model."""
+
+    model_dir: Path
+    points_xyz: Any  # np.ndarray (N, 3) float64
+    points_rgb: Any  # np.ndarray (N, 3) uint8
+    camera_centers: Any  # Optional[np.ndarray] (M, 3) float64
+    registered_views: int
+    num_cameras: int
+    sparse_points: int
+
+
 class ColmapAdapter(ReconstructionEngine):
     """Adapter for COLMAP CLI photogrammetry pipeline.
 
@@ -137,17 +160,178 @@ class ColmapAdapter(ReconstructionEngine):
         return self.resolve_binary(override_path) is not None
 
     @staticmethod
-    def resolve_sparse_model_dir(sparse_dir: Path) -> Path:
-        """Locate directory containing COLMAP model files (cameras.bin/.txt, etc.).
+    def _read_sparse_dir_counts(model_dir: Path) -> SparseModelInfo:
+        """Read registered_views, num_cameras, and sparse_points from a COLMAP model dir."""
+        import struct
 
-        If sparse_dir contains a '0' subfolder with model files, resolves to sparse_dir / '0'.
-        Otherwise returns sparse_dir.
+        reg_views = 0
+        num_cams = 0
+        num_pts = 0
+
+        img_bin = model_dir / "images.bin"
+        img_txt = model_dir / "images.txt"
+        if img_bin.is_file() and img_bin.stat().st_size >= 8:
+            try:
+                with open(img_bin, "rb") as f:
+                    reg_views = int(struct.unpack("<Q", f.read(8))[0])
+            except Exception as exc:
+                logger.warning("Could not parse registered views from %s: %s", img_bin, exc)
+        elif img_txt.is_file():
+            try:
+                with open(img_txt, "r", encoding="utf-8", errors="ignore") as f:
+                    reg_views = sum(1 for line in f if line.strip() and not line.startswith("#")) // 2
+            except Exception as exc:
+                logger.warning("Could not parse registered views from %s: %s", img_txt, exc)
+
+        cam_bin = model_dir / "cameras.bin"
+        cam_txt = model_dir / "cameras.txt"
+        if cam_bin.is_file() and cam_bin.stat().st_size >= 8:
+            try:
+                with open(cam_bin, "rb") as f:
+                    num_cams = int(struct.unpack("<Q", f.read(8))[0])
+            except Exception as exc:
+                logger.warning("Could not parse camera count from %s: %s", cam_bin, exc)
+        elif cam_txt.is_file():
+            try:
+                with open(cam_txt, "r", encoding="utf-8", errors="ignore") as f:
+                    num_cams = sum(1 for line in f if line.strip() and not line.startswith("#"))
+            except Exception as exc:
+                logger.warning("Could not parse camera count from %s: %s", cam_txt, exc)
+
+        pts_bin = model_dir / "points3D.bin"
+        pts_txt = model_dir / "points3D.txt"
+        if pts_bin.is_file() and pts_bin.stat().st_size >= 8:
+            try:
+                with open(pts_bin, "rb") as f:
+                    num_pts = int(struct.unpack("<Q", f.read(8))[0])
+            except Exception as exc:
+                logger.warning("Could not parse sparse points from %s: %s", pts_bin, exc)
+        elif pts_txt.is_file():
+            try:
+                with open(pts_txt, "r", encoding="utf-8", errors="ignore") as f:
+                    num_pts = sum(1 for line in f if line.strip() and not line.startswith("#"))
+            except Exception as exc:
+                logger.warning("Could not parse sparse points from %s: %s", pts_txt, exc)
+
+        return SparseModelInfo(
+            model_dir=model_dir.resolve(),
+            registered_views=reg_views,
+            num_cameras=num_cams,
+            sparse_points=num_pts,
+        )
+
+    @classmethod
+    def select_largest_sparse_model(cls, sparse_dir: Path | str) -> SparseModelInfo:
+        """Scan numeric subdirectories under ``sparse_dir`` (0, 1, 2, ...) and pick the largest model.
+
+        Selects the model with the maximum registered image count (tie-breaking by sparse points,
+        then lowest subdirectory index). Falls back to ``sparse_dir`` itself if no numeric
+        subdirectories contain model files.
         """
-        p = Path(sparse_dir)
-        sub_zero = p / "0"
-        if sub_zero.is_dir() and any(sub_zero.glob("cameras.*")):
-            return sub_zero.resolve()
-        return p.resolve()
+        root = Path(sparse_dir).resolve()
+        candidates: list[tuple[int, SparseModelInfo]] = []
+
+        if root.is_dir():
+            numeric_dirs = sorted(
+                (p for p in root.iterdir() if p.is_dir() and p.name.isdigit()),
+                key=lambda p: int(p.name),
+            )
+            for sub in numeric_dirs:
+                has_model = any(
+                    (sub / fname).is_file()
+                    for fname in ("images.bin", "images.txt", "cameras.bin", "cameras.txt")
+                )
+                if has_model:
+                    info = cls._read_sparse_dir_counts(sub)
+                    candidates.append((int(sub.name), info))
+
+        if candidates:
+            # Maximize (registered_views, sparse_points, -subdir_index)
+            candidates.sort(
+                key=lambda item: (item[1].registered_views, item[1].sparse_points, -item[0]),
+                reverse=True,
+            )
+            winner = candidates[0][1]
+            if len(candidates) > 1:
+                logger.info(
+                    "[SfM] Evaluated %d sparse models; selected winning model '%s' (%d registered views, %d points).",
+                    len(candidates),
+                    winner.model_dir,
+                    winner.registered_views,
+                    winner.sparse_points,
+                )
+            return winner
+
+        return cls._read_sparse_dir_counts(root)
+
+    @classmethod
+    def resolve_sparse_model_dir(cls, sparse_dir: Path) -> Path:
+        """Locate the winning directory containing COLMAP model files (largest registered model)."""
+        return cls.select_largest_sparse_model(sparse_dir).model_dir
+
+    @classmethod
+    def extract_sparse_scene_metadata(cls, sparse_dir: Path | str) -> SparseSceneMetadata:
+        """Load unmasked sparse points and camera centers once from the winning COLMAP model."""
+        import struct
+        import numpy as np
+        from loom.scaling.aruco import load_colmap_model
+
+        info = cls.select_largest_sparse_model(sparse_dir)
+        model_dir = info.model_dir
+
+        cameras, images = load_colmap_model(model_dir)
+        cam_centers: Optional[np.ndarray] = None
+        if images:
+            centers = [-img.R.T @ img.tvec for img in images.values()]
+            cam_centers = np.asarray(centers, dtype=np.float64)
+
+        xyz_list: list[tuple[float, float, float]] = []
+        rgb_list: list[tuple[int, int, int]] = []
+        pts_bin = model_dir / "points3D.bin"
+        pts_txt = model_dir / "points3D.txt"
+        if pts_bin.is_file():
+            with open(pts_bin, "rb") as f:
+                n_pts = struct.unpack("<Q", f.read(8))[0]
+                for _ in range(n_pts):
+                    _pid = struct.unpack("<Q", f.read(8))[0]
+                    x, y, z = struct.unpack("<3d", f.read(24))
+                    r, g, b = struct.unpack("<3B", f.read(3))
+                    _err = struct.unpack("<d", f.read(8))[0]
+                    tlen = struct.unpack("<Q", f.read(8))[0]
+                    if tlen > 0:
+                        f.seek(tlen * 8, 1)
+                    xyz_list.append((x, y, z))
+                    rgb_list.append((r, g, b))
+        elif pts_txt.is_file():
+            with open(pts_txt, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith("#"):
+                        continue
+                    parts = stripped.split()
+                    if len(parts) >= 7:
+                        xyz_list.append((float(parts[1]), float(parts[2]), float(parts[3])))
+                        rgb_list.append((int(parts[4]), int(parts[5]), int(parts[6])))
+
+        pts_xyz = (
+            np.asarray(xyz_list, dtype=np.float64)
+            if xyz_list
+            else np.zeros((0, 3), dtype=np.float64)
+        )
+        pts_rgb = (
+            np.asarray(rgb_list, dtype=np.uint8)
+            if rgb_list
+            else np.zeros((0, 3), dtype=np.uint8)
+        )
+        return SparseSceneMetadata(
+            model_dir=model_dir,
+            points_xyz=pts_xyz,
+            points_rgb=pts_rgb,
+            camera_centers=cam_centers,
+            registered_views=len(images) if images else info.registered_views,
+            num_cameras=len(cameras) if cameras else info.num_cameras,
+            sparse_points=len(pts_xyz) if len(pts_xyz) > 0 else info.sparse_points,
+        )
 
     # -------------------------------------------------------------------------
     # Argument Builders
@@ -317,9 +501,16 @@ class ColmapAdapter(ReconstructionEngine):
         binary_path: Path | str,
         database_path: Path | str,
         image_path: Path | str,
+        *,
+        camera_model: str = "SIMPLE_RADIAL",
+        single_camera: int = 1,
+        peak_threshold: float = 0.004,
+        max_num_features: int = 8192,
+        use_gpu: int = 1,
+        gpu_index: int = 0,
         additional_args: Sequence[str] | None = None,
     ) -> list[str]:
-        """Build command arguments for `colmap feature_extractor`."""
+        """Build command arguments for `colmap feature_extractor` with single-camera optical lock."""
         cmd = [
             str(binary_path),
             "feature_extractor",
@@ -327,6 +518,18 @@ class ColmapAdapter(ReconstructionEngine):
             str(Path(database_path).resolve()),
             "--image_path",
             str(Path(image_path).resolve()),
+            "--ImageReader.camera_model",
+            str(camera_model),
+            "--ImageReader.single_camera",
+            str(single_camera),
+            "--SiftExtraction.peak_threshold",
+            str(peak_threshold),
+            "--SiftExtraction.max_num_features",
+            str(max_num_features),
+            "--FeatureExtraction.use_gpu",
+            str(use_gpu),
+            "--FeatureExtraction.gpu_index",
+            str(gpu_index),
         ]
         if additional_args:
             cmd.extend(additional_args)
@@ -336,14 +539,21 @@ class ColmapAdapter(ReconstructionEngine):
     def build_exhaustive_matcher_args(
         binary_path: Path | str,
         database_path: Path | str,
+        *,
+        use_gpu: int = 1,
+        gpu_index: int = 0,
         additional_args: Sequence[str] | None = None,
     ) -> list[str]:
-        """Build command arguments for `colmap exhaustive_matcher`."""
+        """Build command arguments for GPU `colmap exhaustive_matcher`."""
         cmd = [
             str(binary_path),
             "exhaustive_matcher",
             "--database_path",
             str(Path(database_path).resolve()),
+            "--FeatureMatching.use_gpu",
+            str(use_gpu),
+            "--FeatureMatching.gpu_index",
+            str(gpu_index),
         ]
         if additional_args:
             cmd.extend(additional_args)
@@ -447,6 +657,7 @@ class ColmapAdapter(ReconstructionEngine):
         sequential: bool = False,
         matching_mode: str | None = None,
         *,
+        num_images: int | None = None,
         binary_path: Path | str | None = None,
         overlap: int | None = None,
         quadratic_overlap: int = 1,
@@ -497,7 +708,13 @@ class ColmapAdapter(ReconstructionEngine):
         work_dir = Path(cwd).resolve() if cwd is not None else db_path.parent
 
         use_sequential = False
-        if turbo:
+        if num_images is not None:
+            # Adaptive GPU matching: exhaustive for <= 120 images, sequential fallback for > 120
+            use_sequential = int(num_images) > 120
+            eff_overlap = overlap if overlap is not None else 10
+            eff_quadratic = quadratic_overlap if quadratic_overlap is not None else 1
+            use_gpu = 1
+        elif turbo:
             use_sequential = True
             eff_overlap = overlap if overlap is not None else 10
             eff_quadratic = quadratic_overlap if quadratic_overlap is not None else 1
@@ -527,6 +744,8 @@ class ColmapAdapter(ReconstructionEngine):
             cmd = self.build_exhaustive_matcher_args(
                 binary_path=bin_path,
                 database_path=db_path,
+                use_gpu=use_gpu,
+                gpu_index=gpu_index,
                 additional_args=additional_args,
             )
             step_name = "exhaustive_matcher"
@@ -1296,21 +1515,12 @@ class ColmapAdapter(ReconstructionEngine):
             or str(config.extra_params.get("turbo", "false")).lower() in {"true", "1", "yes"}
         )
 
-        # Determine if sequential matching is requested
-        is_sequential = False
-        matching_mode = config.extra_params.get("matching_mode")
-        if is_turbo:
-            is_sequential = True
-        elif matching_mode is not None:
-            is_sequential = matching_mode.lower() == "sequential"
-        elif sequential is not None:
-            is_sequential = bool(sequential)
-        elif getattr(config, "sequential", False):
-            is_sequential = True
-        elif str(config.extra_params.get("sequential", "false")).lower() in {"true", "1", "yes"}:
-            is_sequential = True
-
+        # Determine adaptive GPU matching strategy:
+        # Exhaustive GPU matching for <= 120 images; sequential fallback only for > 120 images.
+        num_frames = len(valid_frames)
+        is_sequential = num_frames > 120
         mode_str = "sequential" if is_sequential else "exhaustive"
+        gpu_index = int(config.extra_params.get("gpu_index", 0))
 
         # Copy frames into workspace/images
         for frame in valid_frames:
@@ -1321,31 +1531,39 @@ class ColmapAdapter(ReconstructionEngine):
         start_time = time.time()
         timeout = config.timeout_seconds
 
-        # 1. Feature extraction
+        # 1. Feature extraction (single locked SIMPLE_RADIAL camera, peak_threshold 0.004, GPU)
         cmd_extract = self.build_feature_extractor_args(
             binary_path=bin_path,
             database_path=database_path,
             image_path=images_dir,
+            camera_model="SIMPLE_RADIAL",
+            single_camera=1,
+            peak_threshold=0.004,
+            max_num_features=8192,
+            use_gpu=1,
+            gpu_index=gpu_index,
             additional_args=config.additional_args or None,
         )
         self._execute_step("feature_extractor", cmd_extract, cwd=workspace_dir, timeout=timeout)
 
         overlap_param = int(config.extra_params["overlap"]) if "overlap" in config.extra_params else None
 
-        # 2. Feature Matching (Sequential for video; Exhaustive otherwise)
+        # 2. Adaptive GPU Feature Matching (exhaustive <= 120 images, sequential > 120)
         self.run_matching(
             database_path=database_path,
             sequential=is_sequential,
             matching_mode=mode_str,
+            num_images=num_frames,
             binary_path=bin_path,
             overlap=overlap_param,
+            gpu_index=gpu_index,
             timeout_seconds=timeout,
             turbo=is_turbo,
             cwd=workspace_dir,
             additional_args=config.additional_args or None,
         )
 
-        # 3. Mapper (SfM with 16 threads, 20 global BA iterations, 15 local BA iterations; 12/10 in turbo)
+        # 3. Mapper (SfM with 16 threads, 20 global BA iterations, 15 local BA iterations; 15/12 in turbo)
         self.run_mapper(
             database_path=database_path,
             image_path=images_dir,
@@ -1360,42 +1578,34 @@ class ColmapAdapter(ReconstructionEngine):
             additional_args=config.additional_args or None,
         )
 
-        model_sparse = self.resolve_sparse_model_dir(sparse_dir)
+        # 4. Largest sparse model selection & single-camera invariant audit
+        winning_info = self.select_largest_sparse_model(sparse_dir)
+        model_sparse = winning_info.model_dir
 
-        # SfM Circuit Breaker: inspect images.bin / images.txt for registered camera tracking count
-        candidates = [model_sparse, sparse_dir, sparse_dir / "0"]
-        img_bin = None
-        img_txt = None
-        for cand in candidates:
-            if (cand / "images.bin").is_file():
-                img_bin = cand / "images.bin"
-                break
-            elif (cand / "images.txt").is_file():
-                img_txt = cand / "images.txt"
-                break
+        has_images_file = (model_sparse / "images.bin").is_file() or (model_sparse / "images.txt").is_file()
+        reg_count = winning_info.registered_views
+        reg_ratio: Optional[float] = None
 
-        reg_count = 0
-        checked_sfm = False
-        if img_bin is not None and img_bin.is_file():
-            checked_sfm = True
-            try:
-                import struct
-                with open(img_bin, "rb") as f:
-                    reg_count = struct.unpack("<Q", f.read(8))[0]
-            except Exception as e:
-                logger.warning("Could not read registered image count from %s: %s", img_bin, e)
-        elif img_txt is not None and img_txt.is_file():
-            checked_sfm = True
-            try:
-                with open(img_txt, "r", encoding="utf-8", errors="ignore") as f:
-                    reg_count = sum(1 for line in f if line.strip() and not line.startswith("#")) // 2
-            except Exception as e:
-                logger.warning("Could not read registered image count from %s: %s", img_txt, e)
-
-        if checked_sfm:
+        if has_images_file:
             total_frames = len(valid_frames)
-            logger.info("SfM registered %d / %d views (%.1f%%)", reg_count, total_frames, (reg_count / total_frames * 100) if total_frames > 0 else 0)
-            if total_frames > 0 and (reg_count / total_frames) < 0.75:
+            reg_ratio = (reg_count / total_frames) if total_frames > 0 else 0.0
+            logger.info(
+                "SfM winning model '%s': registered %d / %d views (%.1f%%), num_cameras=%d, sparse_points=%d",
+                model_sparse,
+                reg_count,
+                total_frames,
+                reg_ratio * 100.0,
+                winning_info.num_cameras,
+                winning_info.sparse_points,
+            )
+            if winning_info.num_cameras > 1:
+                logger.warning(
+                    "CAMERA INVARIANT VIOLATION: Expected num_cameras == 1 under single_camera=1, "
+                    "found %d cameras in %s!",
+                    winning_info.num_cameras,
+                    model_sparse,
+                )
+            if total_frames > 0 and reg_ratio < 0.75:
                 raise RuntimeError("SfM tracking lost: insufficient overlap or texture. Aborting to prevent invalid geometry.")
 
         # Check if sparse_only or dense was requested in extra_params
@@ -1441,5 +1651,8 @@ class ColmapAdapter(ReconstructionEngine):
             dense_point_cloud_path=point_cloud if is_dense else None,
             execution_time_seconds=elapsed_time,
             input_frames_count=len(valid_frames),
+            registered_cameras_count=reg_count if has_images_file else None,
+            registration_ratio=reg_ratio,
+            point_count=winning_info.sparse_points if has_images_file else None,
             workspace_dir=workspace_dir,
         )

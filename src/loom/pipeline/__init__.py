@@ -22,6 +22,13 @@ from loom.pipeline.artifacts import (
     export_sparse_points_ply,
     read_ply_vertex_count,
 )
+from loom.pipeline.manifest import (
+    PipelineManifest,
+    compute_fast_video_sha256,
+    detect_existing_frame_resolution,
+    prepare_workspace,
+    wipe_stale_workspace_artifacts,
+)
 
 if TYPE_CHECKING:
     from loom.pipeline.runner import Phase1Result, PipelineRunner, run_phase1_pipeline
@@ -41,6 +48,7 @@ __all__ = [
     "FrameSetArtifact",
     "MeshArtifact",
     "Phase1Result",
+    "PipelineManifest",
     "PipelineRunner",
     "PipelineStage",
     "PointCloudArtifact",
@@ -51,11 +59,15 @@ __all__ = [
     "ValidationArtifact",
     "VideoArtifact",
     "VideoIngestStage",
+    "compute_fast_video_sha256",
     "compute_ply_density",
+    "detect_existing_frame_resolution",
     "export_reconstruction_checkpoints",
     "export_sparse_points_ply",
+    "prepare_workspace",
     "read_ply_vertex_count",
     "run_phase1_pipeline",
+    "wipe_stale_workspace_artifacts",
 ]
 
 
