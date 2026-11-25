@@ -9,8 +9,15 @@ PYTHON_BIN="${REPO_ROOT}/.venv312/bin/python"
 
 WORKER_PID=""
 TUNNEL_PID=""
+TUNNEL_LOG=""
+SHUTTING_DOWN=0
 
 cleanup() {
+  if [[ "${SHUTTING_DOWN}" -eq 1 ]]; then
+    return
+  fi
+  SHUTTING_DOWN=1
+
   echo ""
   echo "[LOOM] Shutting down production worker and tunnel cleanly..."
   if [[ -n "${TUNNEL_PID}" ]] && kill -0 "${TUNNEL_PID}" 2>/dev/null; then
@@ -27,6 +34,9 @@ cleanup() {
       kill -KILL "${WORKER_PID}" 2>/dev/null || true
     fi
     wait "${WORKER_PID}" 2>/dev/null || true
+  fi
+  if [[ -n "${TUNNEL_LOG}" && -f "${TUNNEL_LOG}" ]]; then
+    rm -f "${TUNNEL_LOG}"
   fi
   echo "[LOOM] Shutdown complete (zero orphan processes)."
 }
@@ -102,15 +112,31 @@ if [[ -n "${CLOUDFLARED_BIN}" ]]; then
   done
 
   if [[ -n "${LIVE_URL}" ]]; then
+    ENCODED_TUNNEL_URL="$("${PYTHON_BIN}" -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=''))" "${LIVE_URL}")"
+    PAIRED_URL="https://loomvidcapture.vercel.app/?worker=${ENCODED_TUNNEL_URL}"
+
     echo "======================================================================"
     echo "LOOM LIVE HTTPS TUNNEL URL : ${LIVE_URL}"
-    echo "Paste into Vercel Frontend : https://loomvidcapture.vercel.app"
+    echo "PRE-PAIRED VERCEL APP URL  : ${PAIRED_URL}"
+    echo "======================================================================"
+    if "${PYTHON_BIN}" -c "import qrcode" >/dev/null 2>&1; then
+      echo "Scan QR code with your phone to auto-pair LOOM Mobile Capture:"
+      "${PYTHON_BIN}" -c "import sys, qrcode; qr = qrcode.QRCode(border=1); qr.add_data(sys.argv[1]); qr.make(fit=True); qr.print_ascii(invert=True)" "${PAIRED_URL}"
+    elif command -v qrencode >/dev/null 2>&1; then
+      echo "Scan QR code with your phone to auto-pair LOOM Mobile Capture:"
+      qrencode -t ANSIUTF8 -m 1 "${PAIRED_URL}"
+    else
+      echo "[LOOM] Open the Pre-Paired URL above on your phone or laptop."
+      echo "[LOOM] (Optional: install 'qrcode' in .venv312 or 'qrencode' for terminal ASCII QR.)"
+    fi
+    echo "======================================================================"
     echo "Press Ctrl+C to stop both cloudflared and the LOOM GPU worker."
     echo "======================================================================"
   else
     echo "[LOOM] Tunnel running (PID ${TUNNEL_PID}); inspect logs for URL."
   fi
   rm -f "${TUNNEL_LOG}"
+  TUNNEL_LOG=""
   wait "${WORKER_PID}"
 else
   echo "======================================================================"

@@ -4,6 +4,27 @@ This log records chronological development iterations. Every agent completing me
 
 ---
 
+## Iteration 036 — Milestone 3A: Production Tunnel Hardening & QR Auto-Pairing
+- **Date**: 2026-11-25
+- **Milestone**: Milestone 3A Complete (`280 passed, 1 skipped` in sandbox + `bash -n` verified)
+- **Changes Implemented**:
+  - **FastAPI Root & SSE Keepalive Hardening (`src/loom/web/app.py`, `src/loom/web/manager.py`)**:
+    - Added `GET /` returning `{"service": "LOOM GPU Worker", "status": "ok", "health": "/api/health", "docs": "/docs"}` so opening the Cloudflare tunnel root URL returns `200 OK` instead of `404`.
+    - Verified `CORSMiddleware` explicitly allows `https://loomvidcapture.vercel.app`, `http://localhost:5173`, `http://127.0.0.1:5173`, and `allow_origin_regex=r"https://.*\.vercel\.app"` across all methods (`GET`, `POST`, `DELETE`, `OPTIONS`) and headers.
+    - Confirmed SSE response headers `Cache-Control: no-cache`, `Connection: keep-alive`, and `X-Accel-Buffering: no`, and updated the 15s SSE idle heartbeat in `ReconstructionJobManager.subscribe()` to emit `: keepalive\n\n`.
+  - **Idempotent Shutdown & Terminal QR Auto-Pairing (`scripts/start_loom.sh`)**:
+    - Added `SHUTTING_DOWN=0` guard in `cleanup()` so `INT` + `EXIT` traps never execute shutdown twice, and ensured temp tunnel log cleanup on exit.
+    - URL-encodes the captured `https://*.trycloudflare.com` tunnel URL via `.venv312/bin/python` and prints the pre-paired link `https://loomvidcapture.vercel.app/?worker=<URL_ENCODED_TUNNEL_URL>`.
+    - Renders a compact terminal QR code of the pre-paired link via Python `qrcode` if installed, falling back to host `/usr/bin/qrencode -t ANSIUTF8 -m 1` (present on host), with graceful non-fatal fallback if neither is installed.
+  - **Unit Tests (`tests/unit/web/test_api.py`)**:
+    - Added `test_root_route_and_vercel_cors_preflight` (`GET /`, Vercel & localhost CORS `OPTIONS` preflight for `POST`/`DELETE`).
+    - Added `test_sse_headers_and_keepalive_comment_emitted` (`Cache-Control: no-cache`, `Connection: keep-alive`, `X-Accel-Buffering: no`, and live `: keepalive\n\n` emission).
+- **Verification**:
+  - `bash -n scripts/start_loom.sh`: passed (exit 0).
+  - `.venv312/bin/pytest tests/ -q`: **280 passed, 1 skipped** (sandboxed CUDA smoke skip).
+
+---
+
 ## Iteration 035 — Milestone 1: 130-Keyframe Low-Texture SfM, All-Pose TSDF Fusion, Worker SSD Pruning & 1-Command Launcher
 - **Date**: 2026-11-25
 - **Milestone**: Milestone 1 Complete (279/279 Tests Passing + `cube.mp4` 130/130 SfM & `bottle.mp4` End-to-End Watertight STL Verified)

@@ -385,7 +385,7 @@ class ReconstructionJobManager:
                 try:
                     event = await asyncio.wait_for(sub_q.get(), timeout=self.heartbeat_interval)
                 except asyncio.TimeoutError:
-                    yield ": heartbeat\n\n"
+                    yield ": keepalive\n\n"
                     continue
 
                 if event is None:

@@ -100,6 +100,15 @@ def create_app(job_manager: Optional[ReconstructionJobManager] = None) -> FastAP
         allow_headers=["*"],
     )
 
+    @application.get("/")
+    async def root() -> dict[str, str]:
+        return {
+            "service": "LOOM GPU Worker",
+            "status": "ok",
+            "health": "/api/health",
+            "docs": "/docs",
+        }
+
     @application.get("/health", response_model=HealthResponse)
     @application.get("/api/health", response_model=HealthResponse)
     async def health() -> HealthResponse:

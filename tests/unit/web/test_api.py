@@ -564,3 +564,114 @@ def test_job_manager_auto_prunes_old_completed_jobs_preserving_active(tmp_path: 
     assert active_dir.is_dir()
 
 
+def test_root_route_and_vercel_cors_preflight(tmp_path: Path) -> None:
+    """Verify GET / returns 200 service JSON and CORS preflight allows Vercel + localhost origins."""
+    manager = ReconstructionJobManager(jobs_root=tmp_path / "root_cors_jobs")
+    app = create_app(job_manager=manager)
+
+    with TestClient(app) as client:
+        root_resp = client.get("/")
+        assert root_resp.status_code == 200
+        assert root_resp.json() == {
+            "service": "LOOM GPU Worker",
+            "status": "ok",
+            "health": "/api/health",
+            "docs": "/docs",
+        }
+
+        # Exact production Vercel preflight on /api/reconstruct
+        vercel_preflight = client.options(
+            "/api/reconstruct",
+            headers={
+                "Origin": "https://loomvidcapture.vercel.app",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+        assert vercel_preflight.status_code == 200
+        assert (
+            vercel_preflight.headers.get("access-control-allow-origin")
+            == "https://loomvidcapture.vercel.app"
+        )
+        assert "POST" in (vercel_preflight.headers.get("access-control-allow-methods") or "")
+
+        # Local Vite dev origins for DELETE and POST
+        for origin, method in (
+            ("http://localhost:5173", "DELETE"),
+            ("http://127.0.0.1:5173", "POST"),
+        ):
+            preflight = client.options(
+                "/api/reconstruct",
+                headers={
+                    "Origin": origin,
+                    "Access-Control-Request-Method": method,
+                },
+            )
+            assert preflight.status_code == 200
+            assert preflight.headers.get("access-control-allow-origin") == origin
+            assert method in (preflight.headers.get("access-control-allow-methods") or "")
+
+
+def test_sse_headers_and_keepalive_comment_emitted(tmp_path: Path) -> None:
+    """Verify SSE returns X-Accel-Buffering: no, Cache-Control: no-cache, Connection: keep-alive and emits : keepalive."""
+
+    async def _run() -> None:
+        hold_gate = asyncio.Event()
+        started_event = asyncio.Event()
+
+        async def _silent_factory(*args: Any, **kwargs: Any) -> _FakeAsyncProcess:
+            proc = _FakeAsyncProcess(
+                lines=["[2DGS] Step 100/7000 | loss=0.05 | surfels=20000"],
+                returncode=0,
+                hold_gate=hold_gate,
+            )
+            started_event.set()
+            return proc
+
+        manager = ReconstructionJobManager(
+            jobs_root=tmp_path / "sse_keepalive_jobs",
+            subprocess_factory=_silent_factory,
+            heartbeat_interval=0.05,
+        )
+        app = create_app(job_manager=manager)
+        manager.start()
+        try:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/api/reconstruct",
+                    files={"file": ("orbit.mp4", b"fake-mp4-bytes", "video/mp4")},
+                )
+                assert resp.status_code == 202
+                job_id = resp.json()["job_id"]
+                await asyncio.wait_for(started_event.wait(), timeout=2.0)
+
+                received_chunks: list[str] = []
+                stream_headers: dict[str, str] = {}
+
+                async def _consume_sse() -> None:
+                    async with client.stream("GET", f"/api/jobs/{job_id}/stream") as sse_resp:
+                        assert sse_resp.status_code == 200
+                        stream_headers.update({k.lower(): v for k, v in sse_resp.headers.items()})
+                        async for chunk in sse_resp.aiter_text():
+                            received_chunks.append(chunk)
+
+                sse_task = asyncio.create_task(_consume_sse())
+                # Wait long enough for at least one keepalive comment to fire (heartbeat_interval=0.05s)
+                await asyncio.sleep(0.18)
+                await client.delete(f"/api/jobs/{job_id}")
+                await asyncio.wait_for(sse_task, timeout=2.0)
+
+                assert stream_headers.get("cache-control") == "no-cache"
+                assert stream_headers.get("connection") == "keep-alive"
+                assert stream_headers.get("x-accel-buffering") == "no"
+                full_stream = "".join(received_chunks)
+                assert ": keepalive\n\n" in full_stream
+        finally:
+            hold_gate.set()
+            await manager.stop()
+
+    asyncio.run(_run())
+
+
+

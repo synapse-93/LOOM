@@ -3,8 +3,8 @@
 **Project**: LOOM / VIDEO2PRINT  
 **Objective**: Transition an ordinary smartphone video into a metrically scaled, validated, 3D printable object (.STL) with measurable manufacturing readiness.  
 **Last Updated**: 2026-11-25  
-**Current Iteration**: 035 (Milestone 1: 130-Keyframe Low-Texture SfM, All-Pose TSDF, Auto-Pruning Worker & `start_loom.sh`)  
-**Current Milestone**: Milestone 1 Complete — 279/279 Tests Passing, `cube.mp4` 130/130 SfM & `bottle.mp4` Watertight STL Verified  
+**Current Iteration**: 036 (Milestone 3A: Production Tunnel Hardening & QR Auto-Pairing)  
+**Current Milestone**: Milestone 3A Complete — 280 passed (+1 CUDA smoke) / Root Route, CORS Preflight, SSE Keepalive & QR Auto-Pairing Verified  
 
 ---
 
@@ -12,11 +12,11 @@
 
 | Dimension | Status | Notes |
 | :--- | :--- | :--- |
-| **Codebase State** | Milestone 1 Complete | Hardened COLMAP 4.2.0 SfM (`peak_threshold=0.002`, `edge_threshold=16`, `exhaustive_matcher <=150` with `--FeatureMatching.guided_matching 1` & `--SiftMatching.max_ratio 0.85`, `--Mapper.min_num_matches 10`, `--Mapper.init_min_num_inliers 50`). Raised default `max_frames` to `130` with `PipelineManifest.max_frames` cache invalidation. Upgraded 2DGS (`min_opacity=0.01`, `load_all_registered_poses` all-pose TSDF rendering with immediate CPU offload & `gt_mask=None` on excluded poses) and TSDF (`alpha_threshold=0.40`, `views_fused / total_registered_poses`). Added `/api/health` alias, `max_retained_jobs=5` SSD auto-pruning in `src/loom/web/manager.py`, and 1-command launcher `scripts/start_loom.sh`. |
+| **Codebase State** | Milestone 3A Complete | Hardened FastAPI worker (`GET /` service route, explicit Vercel + localhost CORS preflight, SSE `Cache-Control: no-cache` / `Connection: keep-alive` / `X-Accel-Buffering: no` + 15s `: keepalive\n\n` comments) and `scripts/start_loom.sh` (`SHUTTING_DOWN=0` idempotent trap guard, URL-encoded pre-paired link `https://loomvidcapture.vercel.app/?worker=...`, and terminal QR code via `qrcode` or `/usr/bin/qrencode`). Builds cleanly on Milestone 1 (`130`-keyframe low-texture SfM, all-pose TSDF, `max_retained_jobs=5` pruning). |
 | **Runtime Environment** | Linux / `.venv312` (CPython 3.12.16) | Active CUDA 13.0 ML/Geometry venv at `.venv312` (legacy `.venv` untouched). |
-| **Dependencies & Hardware** | CUDA 13.0 Stack Verified | `torch 2.14.1+cu130`, `gsplat 1.5.3`, `rembg` (`isnet-general-use`), `open3d 0.20.0`, `trimesh`, `scipy`, `numpy`, `opencv-python`, `mapbox-earcut`, `fastapi`, `uvicorn`, `httpx`, `pytest`. Native `COLMAP 4.2.0` CUDA at `/usr/bin/colmap`, NVIDIA GeForce RTX 4060 Laptop GPU (8188 MiB VRAM, CUDA: True). |
-| **Verification Status** | **279/279 passed** | `.venv312/bin/pytest tests/ -q` (`278 passed, 1 skipped` sandboxed) + `test_gsplat_153_cuda_shape_smoke PASSED` on RTX 4060. **`cube.mp4` SfM Gate** (`outputs/rewrite_cube_test`): **`130/130` (100.0%)**, `num_cameras=1`, `33,418` sparse pts (resolved prior `39/75` 5-island split). **`bottle.mp4` Full Exit Gate** (`outputs/rewrite_bottle_test`, `120.0 mm`): **`129/129` SfM/Masks/All-Pose TSDF**, 2DGS `final_loss=0.0091` (`240 MiB` VRAM), TSDF `557,539` verts / `1,088,268` faces, `loom_output.stl` **`92,600` verts / `187,036` faces**, **`PrintabilityGate PASSED`** (`watertight=True`, `manifold=True`, `13.33 cm³`, OBB `122.0×42.3×41.5 mm`, `Z_min=0.000000 mm`, exact `9,351,884` bytes). |
-| **Active Blockers** | None | Zero-touch production launch ready via `./scripts/start_loom.sh`. |
+| **Dependencies & Hardware** | CUDA 13.0 Stack Verified | `torch 2.14.1+cu130`, `gsplat 1.5.3`, `rembg` (`isnet-general-use`), `open3d 0.20.0`, `trimesh`, `scipy`, `numpy`, `opencv-python`, `mapbox-earcut`, `fastapi`, `uvicorn`, `httpx`, `pytest`. Native `COLMAP 4.2.0` CUDA at `/usr/bin/colmap`, `/usr/bin/qrencode`, NVIDIA GeForce RTX 4060 Laptop GPU (8188 MiB VRAM, CUDA: True). |
+| **Verification Status** | **280 passed, 1 skipped (sandbox)** | `.venv312/bin/pytest tests/ -q` (`280 passed, 1 skipped` sandboxed; `test_api.py` covers `GET /`, Vercel/localhost CORS preflight, SSE headers & `: keepalive\n\n` emission) + `bash -n scripts/start_loom.sh` passed. Milestone 1 empirical gates remain verified (`cube.mp4` `130/130` SfM; `bottle.mp4` `129/129` SfM -> watertight `loom_output.stl`). |
+| **Active Blockers** | None | Zero-touch production launch + QR auto-pairing ready via `./scripts/start_loom.sh`. |
 
 ---
 
