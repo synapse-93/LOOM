@@ -101,6 +101,7 @@ def create_app(job_manager: Optional[ReconstructionJobManager] = None) -> FastAP
     )
 
     @application.get("/health", response_model=HealthResponse)
+    @application.get("/api/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
         gpu_info, colmap_version = await asyncio.gather(
             asyncio.to_thread(_probe_gpu),

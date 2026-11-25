@@ -12,7 +12,7 @@ class VideoConfig:
     """Settings for video ingest and frame extraction."""
 
     sample_interval: int = 1
-    max_frames: int = 75
+    max_frames: int = 130
     target_fps: Optional[float] = None
     min_resolution_width: int = 1280
     min_resolution_height: int = 720

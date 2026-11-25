@@ -172,6 +172,7 @@ class ReconstructionJobManager:
         subprocess_factory: Optional[Callable[..., Awaitable[Any]]] = None,
         max_upload_bytes: int = MAX_UPLOAD_BYTES,
         heartbeat_interval: float = HEARTBEAT_INTERVAL_SECONDS,
+        max_retained_jobs: int = 5,
     ) -> None:
         self.repo_root: Path = (
             Path(repo_root).resolve()
@@ -188,6 +189,7 @@ class ReconstructionJobManager:
         )
         self.max_upload_bytes: int = max_upload_bytes
         self.heartbeat_interval: float = heartbeat_interval
+        self.max_retained_jobs: int = max(0, int(max_retained_jobs))
 
         self._jobs: dict[str, _JobRecord] = {}
         self._pending_order: list[str] = []
@@ -538,6 +540,7 @@ class ReconstructionJobManager:
         return record.video_path
 
     async def _execute_job(self, record: _JobRecord) -> None:
+        self._prune_old_jobs()
         record.status = "RUNNING"
         record.started_at = _utc_now_iso()
         record.progress = 2
@@ -644,6 +647,62 @@ class ReconstructionJobManager:
             record.completed_at = _utc_now_iso()
 
         self._broadcast_done(record)
+        self._prune_old_jobs()
+
+    def _prune_old_jobs(self) -> list[Path]:
+        """Delete oldest completed/failed/cancelled job workspaces on disk beyond max_retained_jobs.
+
+        Never deletes actively running or queued jobs.
+        """
+        if self.max_retained_jobs <= 0 or not self.jobs_root.is_dir():
+            return []
+
+        protected_ids: set[str] = {
+            jid
+            for jid, rec in self._jobs.items()
+            if rec.status not in TERMINAL_STATUSES
+        }
+        if self._active_job_id is not None:
+            protected_ids.add(self._active_job_id)
+
+        # Collect candidate terminal workspaces (both tracked and pre-existing on disk)
+        candidates: list[tuple[float, str, Path]] = []
+        seen_dirs: set[Path] = set()
+
+        for jid, rec in list(self._jobs.items()):
+            if jid in protected_ids:
+                continue
+            if rec.job_dir.is_dir():
+                ts = rec.job_dir.stat().st_mtime
+                if rec.completed_at:
+                    try:
+                        ts = datetime.fromisoformat(rec.completed_at).timestamp()
+                    except Exception:
+                        pass
+                candidates.append((ts, jid, rec.job_dir))
+                seen_dirs.add(rec.job_dir.resolve())
+
+        for entry in self.jobs_root.iterdir():
+            if not entry.is_dir():
+                continue
+            resolved = entry.resolve()
+            if resolved in seen_dirs or entry.name in protected_ids:
+                continue
+            candidates.append((entry.stat().st_mtime, entry.name, entry))
+            seen_dirs.add(resolved)
+
+        # Sort newest first; prune everything beyond max_retained_jobs
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        pruned: list[Path] = []
+        for _ts, jid, job_dir in candidates[self.max_retained_jobs :]:
+            try:
+                shutil.rmtree(job_dir, ignore_errors=True)
+                pruned.append(job_dir)
+                logger.info("[CLEANUP] Pruned old job workspace %s", job_dir)
+            except Exception as exc:
+                logger.warning("[CLEANUP] Failed to prune old job workspace %s: %s", job_dir, exc)
+
+        return pruned
 
     @staticmethod
     def _discover_artifacts(job_dir: Path) -> tuple[Optional[Path], Optional[Path]]:
@@ -670,4 +729,8 @@ class ReconstructionJobManager:
             )
             manifest_path = manifest_candidates[0] if manifest_candidates else None
         return stl_path, manifest_path
+
+
+# Convenience alias for production worker orchestration
+JobManager = ReconstructionJobManager
 

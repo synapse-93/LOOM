@@ -55,7 +55,7 @@ class Gaussian2DGSConfig:
     densify_from_iter: int = 500
     densify_interval: int = 250
     opacity_reset_interval: int = 3000
-    min_opacity: float = 0.02
+    min_opacity: float = 0.01
     grad_threshold: float = 0.0002
     max_scale_ratio: float = 0.15
 
@@ -98,6 +98,19 @@ class TrainingView:
 
 
 @dataclass
+class RenderPose:
+    """Lightweight camera pose for all-pose TSDF depth rendering (no RGB kept in RAM)."""
+
+    image_id: int
+    name: str
+    width: int
+    height: int
+    K: np.ndarray                 # (3, 3) float64
+    viewmat: np.ndarray           # (4, 4) float64 world-to-camera [R | t]
+    mask_u8: Optional[np.ndarray] = None  # None for excluded views -> alpha-only TSDF gating
+
+
+@dataclass
 class Trained2DGSModel:
     """Container holding optimized 2DGS surfel parameters and metadata for TSDF extraction."""
 
@@ -118,6 +131,7 @@ class Trained2DGSModel:
     iterations: int = 0
     peak_vram_mib: float = 0.0
     debug_render_paths: list[str] = field(default_factory=list)
+    all_poses: list[RenderPose] = field(default_factory=list)
 
     @property
     def means_np(self) -> np.ndarray:
@@ -672,6 +686,95 @@ class Gaussian2DGSReconstructor:
         )
         return views, fg_xyz, fg_rgb
 
+    def load_all_registered_poses(
+        self,
+        images_dir: Path | str,
+        masks_dir: Path | str,
+        sparse_dir: Path | str,
+        *,
+        valid_view_names: Optional[Sequence[str]] = None,
+    ) -> list[RenderPose]:
+        """Load ALL registered undistorted COLMAP poses for full-orbit TSDF depth rendering.
+
+        Views present in ``valid_view_names`` carry their binary mask; views excluded during
+        masking carry ``mask_u8 = None`` so TSDF relies solely on 3D-consistent ``render_alpha``.
+        """
+        img_root = Path(images_dir).resolve()
+        mask_root = Path(masks_dir).resolve()
+        sparse_root = Path(sparse_dir).resolve()
+
+        cameras, images = load_colmap_model(sparse_root)
+        allowed_set = set(valid_view_names) if valid_view_names is not None else None
+        max_dim = self.config.effective_max_image_size
+        poses: list[RenderPose] = []
+
+        for img_id in sorted(images.keys()):
+            col_img: ColmapImage = images[img_id]
+            cam: Optional[ColmapCamera] = cameras.get(col_img.camera_id)
+            if cam is None:
+                continue
+
+            w = int(cam.width)
+            h = int(cam.height)
+            K = cam.K.copy()
+
+            img_path = img_root / col_img.name
+            if img_path.is_file():
+                bgr = cv2.imread(str(img_path), cv2.IMREAD_COLOR)
+                if bgr is not None and bgr.size > 0:
+                    ih, iw = bgr.shape[:2]
+                    if w > 0 and h > 0 and (iw != w or ih != h):
+                        K[0, 0] *= iw / float(w)
+                        K[0, 2] *= iw / float(w)
+                        K[1, 1] *= ih / float(h)
+                        K[1, 2] *= ih / float(h)
+                    w, h = iw, ih
+
+            if w <= 0 or h <= 0:
+                continue
+
+            mask_bin: Optional[np.ndarray] = None
+            is_valid_view = allowed_set is None or col_img.name in allowed_set
+            if is_valid_view:
+                mask_path = mask_root / f"{Path(col_img.name).stem}.png"
+                if mask_path.is_file():
+                    raw_mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+                    if raw_mask is not None and raw_mask.size > 0:
+                        if raw_mask.shape[:2] != (h, w):
+                            raw_mask = cv2.resize(raw_mask, (w, h), interpolation=cv2.INTER_NEAREST)
+                        mask_bin = np.where(raw_mask >= 128, np.uint8(255), np.uint8(0))
+
+            long_edge = max(h, w)
+            if long_edge > max_dim:
+                scale = float(max_dim) / float(long_edge)
+                new_w = max(16, int(round(w * scale)))
+                new_h = max(16, int(round(h * scale)))
+                K[0, 0] *= new_w / float(w)
+                K[0, 2] *= new_w / float(w)
+                K[1, 1] *= new_h / float(h)
+                K[1, 2] *= new_h / float(h)
+                if mask_bin is not None:
+                    mask_bin = cv2.resize(mask_bin, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+                w, h = new_w, new_h
+
+            viewmat = np.eye(4, dtype=np.float64)
+            viewmat[:3, :3] = col_img.R
+            viewmat[:3, 3] = col_img.tvec
+
+            poses.append(
+                RenderPose(
+                    image_id=img_id,
+                    name=col_img.name,
+                    width=w,
+                    height=h,
+                    K=K,
+                    viewmat=viewmat,
+                    mask_u8=mask_bin,
+                )
+            )
+
+        return poses
+
     @staticmethod
     def _estimate_initial_scales(points: np.ndarray, object_radius: float) -> np.ndarray:
         """Initialize thin 2D surfel log-scales from 3-NN spacing clamped relative to object_radius."""
@@ -959,6 +1062,13 @@ class Gaussian2DGSReconstructor:
         peak_vram_mib = torch.cuda.max_memory_allocated(device) / (1024.0 * 1024.0)
         torch.cuda.empty_cache()
 
+        all_poses = self.load_all_registered_poses(
+            images_dir,
+            masks_dir,
+            sparse_dir,
+            valid_view_names=[v.name for v in views],
+        )
+
         model = Trained2DGSModel(
             means=params["means"].detach(),
             scales=params["scales"].detach(),
@@ -976,6 +1086,7 @@ class Gaussian2DGSReconstructor:
             init_surfels=n_init,
             iterations=total_iters,
             peak_vram_mib=peak_vram_mib,
+            all_poses=all_poses,
         )
 
         if debug_dir is not None:
@@ -1076,11 +1187,16 @@ class Gaussian2DGSReconstructor:
         list[np.ndarray],
         list[np.ndarray],
         list[np.ndarray],
-        list[np.ndarray],
+        list[Optional[np.ndarray]],
         list[np.ndarray],
         list[np.ndarray],
     ]:
-        """Render median camera-space Z-depth, RGB, and alpha across all valid views for TSDF."""
+        """Render median camera-space Z-depth, RGB, and alpha across ALL registered poses for TSDF.
+
+        Each view's rendered tensors are moved immediately to CPU NumPy under ``torch.no_grad()``
+        so GPU VRAM stays flat even for 130+ registered poses. Views excluded during masking emit
+        ``gt_mask=None`` so TSDF relies solely on converged 3D-consistent ``render_alpha``.
+        """
         import torch
         import torch.nn.functional as F
         from gsplat import rasterization_2dgs
@@ -1091,15 +1207,17 @@ class Gaussian2DGSReconstructor:
         scales_act = torch.exp(torch.clamp(model.scales, min=-10.0, max=2.0))
         opacities_act = torch.sigmoid(model.opacities)
 
+        target_poses: Sequence[Any] = model.all_poses if getattr(model, "all_poses", None) else model.views
+
         depths: list[np.ndarray] = []
         rgbs: list[np.ndarray] = []
         alphas: list[np.ndarray] = []
-        masks: list[np.ndarray] = []
+        masks: list[Optional[np.ndarray]] = []
         intrinsics: list[np.ndarray] = []
         extrinsics: list[np.ndarray] = []
 
         with torch.no_grad():
-            for view in model.views:
+            for view in target_poses:
                 viewmat_t = torch.tensor(view.viewmat, dtype=torch.float32, device=device).unsqueeze(0)
                 K_t = torch.tensor(view.K, dtype=torch.float32, device=device).unsqueeze(0)
 
@@ -1131,6 +1249,8 @@ class Gaussian2DGSReconstructor:
                 else:
                     depth_tensor = render_colors[0, ..., 3]
                 depth_np = depth_tensor.cpu().numpy().astype(np.float32)
+
+                del out, render_colors, render_alphas, render_median, depth_tensor, viewmat_t, K_t
 
                 depths.append(depth_np)
                 rgbs.append(rgb_np)

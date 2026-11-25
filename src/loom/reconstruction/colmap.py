@@ -504,7 +504,8 @@ class ColmapAdapter(ReconstructionEngine):
         *,
         camera_model: str = "SIMPLE_RADIAL",
         single_camera: int = 1,
-        peak_threshold: float = 0.004,
+        peak_threshold: float = 0.002,
+        edge_threshold: int = 16,
         max_num_features: int = 8192,
         use_gpu: int = 1,
         gpu_index: int = 0,
@@ -524,6 +525,8 @@ class ColmapAdapter(ReconstructionEngine):
             str(single_camera),
             "--SiftExtraction.peak_threshold",
             str(peak_threshold),
+            "--SiftExtraction.edge_threshold",
+            str(edge_threshold),
             "--SiftExtraction.max_num_features",
             str(max_num_features),
             "--FeatureExtraction.use_gpu",
@@ -542,9 +545,11 @@ class ColmapAdapter(ReconstructionEngine):
         *,
         use_gpu: int = 1,
         gpu_index: int = 0,
+        guided_matching: int = 1,
+        max_ratio: float = 0.85,
         additional_args: Sequence[str] | None = None,
     ) -> list[str]:
-        """Build command arguments for GPU `colmap exhaustive_matcher`."""
+        """Build command arguments for GPU `colmap exhaustive_matcher` (COLMAP 4.2.0 flags)."""
         cmd = [
             str(binary_path),
             "exhaustive_matcher",
@@ -554,6 +559,10 @@ class ColmapAdapter(ReconstructionEngine):
             str(use_gpu),
             "--FeatureMatching.gpu_index",
             str(gpu_index),
+            "--FeatureMatching.guided_matching",
+            str(guided_matching),
+            "--SiftMatching.max_ratio",
+            str(max_ratio),
         ]
         if additional_args:
             cmd.extend(additional_args)
@@ -568,19 +577,11 @@ class ColmapAdapter(ReconstructionEngine):
         loop_detection: int = 1,
         use_gpu: int = 1,
         gpu_index: int = 0,
+        guided_matching: int = 1,
+        max_ratio: float = 0.85,
         additional_args: Sequence[str] | None = None,
     ) -> list[str]:
-        """Build command arguments for `colmap sequential_matcher`.
-
-        Configured with video matching optimization:
-            colmap sequential_matcher \
-                --database_path <db> \
-                --SequentialMatching.overlap 10 \
-                --SequentialMatching.quadratic_overlap 1 \
-                --SequentialMatching.loop_detection 1 \
-                --FeatureMatching.use_gpu 1 \
-                --FeatureMatching.gpu_index 0
-        """
+        """Build command arguments for `colmap sequential_matcher`."""
         cmd = [
             str(binary_path),
             "sequential_matcher",
@@ -596,6 +597,10 @@ class ColmapAdapter(ReconstructionEngine):
             str(use_gpu),
             "--FeatureMatching.gpu_index",
             str(gpu_index),
+            "--FeatureMatching.guided_matching",
+            str(guided_matching),
+            "--SiftMatching.max_ratio",
+            str(max_ratio),
         ]
         if additional_args:
             cmd.extend(additional_args)
@@ -610,21 +615,11 @@ class ColmapAdapter(ReconstructionEngine):
         num_threads: int = 16,
         ba_global_max_num_iterations: int = 20,
         ba_local_max_num_iterations: int = 15,
-        min_num_matches: int = 15,
+        min_num_matches: int = 10,
+        init_min_num_inliers: int = 50,
         additional_args: Sequence[str] | None = None,
     ) -> list[str]:
-        """Build command arguments for `colmap mapper` with 16-thread scaling, BA limits, and match bounds.
-
-        Enforces CPU mapping flags:
-            colmap mapper \
-                --database_path <db> \
-                --image_path <images> \
-                --output_path <sparse> \
-                --Mapper.num_threads 16 \
-                --Mapper.ba_global_max_num_iterations 20 \
-                --Mapper.ba_local_max_num_iterations 15 \
-                --Mapper.min_num_matches 15
-        """
+        """Build command arguments for `colmap mapper` (COLMAP 4.2.0 low-texture hardened)."""
         cmd = [
             str(binary_path),
             "mapper",
@@ -642,6 +637,8 @@ class ColmapAdapter(ReconstructionEngine):
             str(ba_local_max_num_iterations),
             "--Mapper.min_num_matches",
             str(min_num_matches),
+            "--Mapper.init_min_num_inliers",
+            str(init_min_num_inliers),
         ]
         if additional_args:
             cmd.extend(additional_args)
@@ -709,8 +706,8 @@ class ColmapAdapter(ReconstructionEngine):
 
         use_sequential = False
         if num_images is not None:
-            # Adaptive GPU matching: exhaustive for <= 120 images, sequential fallback for > 120
-            use_sequential = int(num_images) > 120
+            # Adaptive GPU matching: exhaustive for <= 150 images, sequential fallback for > 150
+            use_sequential = int(num_images) > 150
             eff_overlap = overlap if overlap is not None else 10
             eff_quadratic = quadratic_overlap if quadratic_overlap is not None else 1
             use_gpu = 1
@@ -762,7 +759,8 @@ class ColmapAdapter(ReconstructionEngine):
         num_threads: int = 16,
         ba_global_max_num_iterations: int = 20,
         ba_local_max_num_iterations: int = 15,
-        min_num_matches: int = 15,
+        min_num_matches: int = 10,
+        init_min_num_inliers: int = 50,
         timeout_seconds: int = 1800,
         turbo: bool = False,
         additional_args: Sequence[str] | None = None,
@@ -817,6 +815,7 @@ class ColmapAdapter(ReconstructionEngine):
             ba_global_max_num_iterations=ba_global_max_num_iterations,
             ba_local_max_num_iterations=ba_local_max_num_iterations,
             min_num_matches=min_num_matches,
+            init_min_num_inliers=init_min_num_inliers,
             additional_args=additional_args,
         )
         self._execute_step("mapper", cmd, cwd=work_dir, timeout=timeout_seconds)
@@ -1516,9 +1515,9 @@ class ColmapAdapter(ReconstructionEngine):
         )
 
         # Determine adaptive GPU matching strategy:
-        # Exhaustive GPU matching for <= 120 images; sequential fallback only for > 120 images.
+        # Exhaustive GPU matching for <= 150 images; sequential fallback only for > 150 images.
         num_frames = len(valid_frames)
-        is_sequential = num_frames > 120
+        is_sequential = num_frames > 150
         mode_str = "sequential" if is_sequential else "exhaustive"
         gpu_index = int(config.extra_params.get("gpu_index", 0))
 
@@ -1531,14 +1530,15 @@ class ColmapAdapter(ReconstructionEngine):
         start_time = time.time()
         timeout = config.timeout_seconds
 
-        # 1. Feature extraction (single locked SIMPLE_RADIAL camera, peak_threshold 0.004, GPU)
+        # 1. Feature extraction (single locked SIMPLE_RADIAL camera, peak_threshold 0.002, edge_threshold 16, GPU)
         cmd_extract = self.build_feature_extractor_args(
             binary_path=bin_path,
             database_path=database_path,
             image_path=images_dir,
             camera_model="SIMPLE_RADIAL",
             single_camera=1,
-            peak_threshold=0.004,
+            peak_threshold=0.002,
+            edge_threshold=16,
             max_num_features=8192,
             use_gpu=1,
             gpu_index=gpu_index,
@@ -1548,7 +1548,7 @@ class ColmapAdapter(ReconstructionEngine):
 
         overlap_param = int(config.extra_params["overlap"]) if "overlap" in config.extra_params else None
 
-        # 2. Adaptive GPU Feature Matching (exhaustive <= 120 images, sequential > 120)
+        # 2. Adaptive GPU Feature Matching (exhaustive <= 150 images, sequential > 150)
         self.run_matching(
             database_path=database_path,
             sequential=is_sequential,

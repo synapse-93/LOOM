@@ -98,3 +98,30 @@ def test_prepare_workspace_wipes_on_frame_resolution_mismatch(tmp_path: Path) ->
     assert not (ws / "sparse").exists()
     assert not (ws / "database.db").exists()
 
+
+def test_prepare_workspace_invalidates_when_max_frames_changes(tmp_path: Path) -> None:
+    """Verify changing max_frames (e.g. 75 -> 130) invalidates cached frames/sfm, while matching resumes."""
+    video = tmp_path / "orbit.mp4"
+    video.write_bytes(b"ORBIT_VIDEO_STREAM" * 40)
+    ws = tmp_path / "ws_mf"
+
+    m1 = prepare_workspace(ws, video, engine="2dgs", turbo=False, max_frames=75)
+    assert m1.max_frames == 75
+    _seed_stale_workspace(ws, frame_size=(960, 540))
+    m1.frame_resolution = (960, 540)
+    m1.mark_stage_complete("frames")
+    m1.mark_stage_complete("sfm")
+    m1.save(ws)
+
+    # Matching max_frames=75 -> resumes cleanly
+    m_same = prepare_workspace(ws, video, engine="2dgs", turbo=False, max_frames=75)
+    assert m_same.is_stage_complete("frames")
+    assert m_same.is_stage_complete("sfm")
+
+    # Changed max_frames=130 -> wipes stale 75-frame cache and stores max_frames=130
+    m_new = prepare_workspace(ws, video, engine="2dgs", turbo=False, max_frames=130)
+    assert m_new.max_frames == 130
+    assert m_new.stages_completed == []
+    assert not (ws / "extracted_frames").exists()
+    assert not (ws / "sparse").exists()
+

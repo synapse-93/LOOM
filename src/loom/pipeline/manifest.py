@@ -116,6 +116,7 @@ class PipelineManifest:
     video_sha256: str
     engine: str
     turbo: bool
+    max_frames: int | None = None
     frame_resolution: tuple[int, int] | None = None
     sfm: dict[str, Any] = field(default_factory=dict)
     masking: dict[str, Any] = field(default_factory=dict)
@@ -169,6 +170,7 @@ class PipelineManifest:
             "video_sha256": self.video_sha256,
             "engine": self.engine,
             "turbo": self.turbo,
+            "max_frames": int(self.max_frames) if self.max_frames is not None else None,
             "frame_resolution": list(self.frame_resolution) if self.frame_resolution is not None else None,
             "sfm": dict(self.sfm),
             "masking": dict(self.masking),
@@ -185,11 +187,14 @@ class PipelineManifest:
         frame_res: tuple[int, int] | None = None
         if isinstance(raw_res, (list, tuple)) and len(raw_res) == 2:
             frame_res = (int(raw_res[0]), int(raw_res[1]))
+        raw_max_frames = data.get("max_frames")
+        max_frames_val = int(raw_max_frames) if raw_max_frames is not None else None
         return cls(
             video_path=str(data.get("video_path", "")),
             video_sha256=str(data.get("video_sha256", "")),
             engine=str(data.get("engine", "2dgs")),
             turbo=bool(data.get("turbo", False)),
+            max_frames=max_frames_val,
             frame_resolution=frame_res,
             sfm=dict(data.get("sfm") or {}),
             masking=dict(data.get("masking") or {}),
@@ -230,18 +235,20 @@ def prepare_workspace(
     video_path: Path,
     engine: str,
     turbo: bool,
+    max_frames: int | None = None,
 ) -> PipelineManifest:
-    """Validate workspace cache against video SHA-256 and frame resolution, wiping stale data.
+    """Validate workspace cache against video SHA-256, max_frames, and resolution, wiping stale data.
 
     Wipes ``extracted_frames/``, ``images/``, ``database.db``, ``sparse/``, ``dense/``,
     ``masks/``, and ``debug_*`` whenever:
       - ``pipeline_manifest.json`` does not exist,
       - ``video_sha256`` differs from the current video,
-      - ``turbo`` mode changed (changing target keyframe resolution), or
+      - ``turbo`` mode changed (changing target keyframe resolution),
+      - ``max_frames`` was supplied and differs from ``manifest.max_frames``, or
       - existing frames on disk do not match ``manifest.frame_resolution``.
 
-    When the hash and resolution match, preserves existing artifacts and returns the loaded
-    ``PipelineManifest`` so already-completed stages can safely resume.
+    When the hash, keyframe budget, and resolution match, preserves existing artifacts and returns
+    the loaded ``PipelineManifest`` so already-completed stages can safely resume.
     """
     ws = ensure_directory(Path(workspace).resolve())
     resolved_video = Path(video_path).resolve()
@@ -258,6 +265,8 @@ def prepare_workspace(
         )
     elif existing.turbo != bool(turbo):
         invalidation_reason = f"turbo preset changed ({existing.turbo} -> {bool(turbo)})"
+    elif max_frames is not None and existing.max_frames != int(max_frames):
+        invalidation_reason = f"max_frames changed ({existing.max_frames} -> {int(max_frames)})"
     else:
         disk_res = detect_existing_frame_resolution(ws)
         if (
@@ -282,6 +291,7 @@ def prepare_workspace(
             video_sha256=video_sha,
             engine=str(engine),
             turbo=bool(turbo),
+            max_frames=int(max_frames) if max_frames is not None else None,
         )
         manifest.save(ws)
         return manifest
@@ -289,6 +299,8 @@ def prepare_workspace(
     assert existing is not None
     existing.video_path = str(resolved_video)
     existing.engine = str(engine)
+    if max_frames is not None:
+        existing.max_frames = int(max_frames)
     existing.save(ws)
     logger.info(
         "[CACHE] Resuming validated workspace '%s' (sha256=%s, stages_completed=%s)",

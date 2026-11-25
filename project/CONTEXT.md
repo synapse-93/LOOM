@@ -2,9 +2,9 @@
 
 **Project**: LOOM / VIDEO2PRINT  
 **Objective**: Transition an ordinary smartphone video into a metrically scaled, validated, 3D printable object (.STL) with measurable manufacturing readiness.  
-**Last Updated**: 2026-11-22  
-**Current Iteration**: 034 (Rewrite Phase 4 Final: Void-Elimination 2DGS/TSDF, Guaranteed Watertight Export & `.venv312` FastAPI Worker)  
-**Current Milestone**: All 4 Architectural Rewrite Phases Complete — 277/277 Tests Passing & End-to-End Watertight `box.mp4` STL Verified  
+**Last Updated**: 2026-11-25  
+**Current Iteration**: 035 (Milestone 1: 130-Keyframe Low-Texture SfM, All-Pose TSDF, Auto-Pruning Worker & `start_loom.sh`)  
+**Current Milestone**: Milestone 1 Complete — 279/279 Tests Passing, `cube.mp4` 130/130 SfM & `bottle.mp4` Watertight STL Verified  
 
 ---
 
@@ -12,11 +12,11 @@
 
 | Dimension | Status | Notes |
 | :--- | :--- | :--- |
-| **Codebase State** | All 4 Rewrite Phases Complete | Applied void-elimination fixes in `gaussian_2dgs.py` (`lambda_mask` `0.5->0.05` second-half decay, `lambda_normal` `0.05->0.08` final 30%) and `tsdf_mesh.py` (`render_alpha>=0.45` without re-punching `gt_mask` voids, `voxel_divisor=320`, `trunc=2.5`). Extended `PipelineManifest` with `export` dict & `"export"` stage gate/resume. Implemented `MeshProcessor.solidify_for_print()` (Taubin polish, 2nd-pct planar base cap, Tier 1 hole fill, Tier 2 Screened Poisson + 180-voxel/Taubin/flat-cap watertight guarantee, quadric decimation, `float64` scaling, `Z_min=0`). Wired `--engine 2dgs --export-stl`, `<workspace>/loom_output.stl`, and `[VISUAL_HULL]`/`[EXPORT]` SSE progress into `src/loom/web/manager.py` & `scripts/serve_worker.py`. |
+| **Codebase State** | Milestone 1 Complete | Hardened COLMAP 4.2.0 SfM (`peak_threshold=0.002`, `edge_threshold=16`, `exhaustive_matcher <=150` with `--FeatureMatching.guided_matching 1` & `--SiftMatching.max_ratio 0.85`, `--Mapper.min_num_matches 10`, `--Mapper.init_min_num_inliers 50`). Raised default `max_frames` to `130` with `PipelineManifest.max_frames` cache invalidation. Upgraded 2DGS (`min_opacity=0.01`, `load_all_registered_poses` all-pose TSDF rendering with immediate CPU offload & `gt_mask=None` on excluded poses) and TSDF (`alpha_threshold=0.40`, `views_fused / total_registered_poses`). Added `/api/health` alias, `max_retained_jobs=5` SSD auto-pruning in `src/loom/web/manager.py`, and 1-command launcher `scripts/start_loom.sh`. |
 | **Runtime Environment** | Linux / `.venv312` (CPython 3.12.16) | Active CUDA 13.0 ML/Geometry venv at `.venv312` (legacy `.venv` untouched). |
 | **Dependencies & Hardware** | CUDA 13.0 Stack Verified | `torch 2.14.1+cu130`, `gsplat 1.5.3`, `rembg` (`isnet-general-use`), `open3d 0.20.0`, `trimesh`, `scipy`, `numpy`, `opencv-python`, `mapbox-earcut`, `fastapi`, `uvicorn`, `httpx`, `pytest`. Native `COLMAP 4.2.0` CUDA at `/usr/bin/colmap`, NVIDIA GeForce RTX 4060 Laptop GPU (8188 MiB VRAM, CUDA: True). |
-| **Verification Status** | **277/277 passed** | `.venv312/bin/pytest tests/ -q` (`276 passed, 1 skipped` sandboxed) + `test_gsplat_153_cuda_shape_smoke PASSED` on RTX 4060. Full-res `box.mp4` Phase 4 end-to-end exit gate (`outputs/rewrite_box_test`): 2DGS `77,986` surfels (`298 MiB` peak VRAM) -> TSDF `455,305` verts / `877,533` faces (`voxel=0.00683`) -> `loom_output.stl` **`95,173` verts / `192,902` faces**, **`PrintabilityGate PASSED`** (`watertight=True`, `manifold=True`, `0` boundary/non-manifold edges, `56.62 cm³`, `[154.92, 200.00, 85.95] mm`, `Z_min=0.000000 mm`, exact `9,645,184` bytes). |
-| **Active Blockers** | None | Production-ready for live FastAPI worker (`scripts/serve_worker.py`) + Vercel frontend bridge. |
+| **Verification Status** | **279/279 passed** | `.venv312/bin/pytest tests/ -q` (`278 passed, 1 skipped` sandboxed) + `test_gsplat_153_cuda_shape_smoke PASSED` on RTX 4060. **`cube.mp4` SfM Gate** (`outputs/rewrite_cube_test`): **`130/130` (100.0%)**, `num_cameras=1`, `33,418` sparse pts (resolved prior `39/75` 5-island split). **`bottle.mp4` Full Exit Gate** (`outputs/rewrite_bottle_test`, `120.0 mm`): **`129/129` SfM/Masks/All-Pose TSDF**, 2DGS `final_loss=0.0091` (`240 MiB` VRAM), TSDF `557,539` verts / `1,088,268` faces, `loom_output.stl` **`92,600` verts / `187,036` faces**, **`PrintabilityGate PASSED`** (`watertight=True`, `manifold=True`, `13.33 cm³`, OBB `122.0×42.3×41.5 mm`, `Z_min=0.000000 mm`, exact `9,351,884` bytes). |
+| **Active Blockers** | None | Zero-touch production launch ready via `./scripts/start_loom.sh`. |
 
 ---
 
@@ -47,5 +47,5 @@
 
 ## Immediate Next Task
 
-1. Launch `.venv312/bin/python scripts/serve_worker.py` + `cloudflared tunnel --url http://localhost:8000` and run a live upload from `https://loomvidcapture.vercel.app` to verify end-to-end SSE streaming and `.stl` download in the browser.
-2. Benchmark additional diverse tabletop objects (e.g., shoes, mugs, figurines) through `--engine 2dgs --turbo --export-stl` to validate cross-object generalization and turnaround time.
+1. Launch `./scripts/start_loom.sh` to start the RTX 4060 FastAPI worker + Cloudflare HTTPS tunnel and verify live upload/SSE streaming/STL download from `https://loomvidcapture.vercel.app`.
+2. Finish the downstream stages (`--from-stage mask --export-stl`) on `outputs/rewrite_cube_test` if a full `cube.mp4` STL benchmark is desired alongside `box.mp4` and `bottle.mp4`.

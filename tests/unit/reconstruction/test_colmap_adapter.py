@@ -769,7 +769,7 @@ def test_feature_extractor_optical_lock_and_adaptive_matching_routing(
     dummy_binary: Path,
     tmp_path: Path,
 ) -> None:
-    """Verify single_camera=1, SIMPLE_RADIAL, peak_threshold=0.004, and <=120 exhaustive vs >120 sequential."""
+    """Verify single_camera=1, SIMPLE_RADIAL, peak_threshold=0.002, edge_threshold=16, guided_matching=1, max_ratio=0.85, and <=150 exhaustive vs >150 sequential."""
     db_path = tmp_path / "database.db"
     img_dir = tmp_path / "images"
     img_dir.mkdir()
@@ -783,7 +783,8 @@ def test_feature_extractor_optical_lock_and_adaptive_matching_routing(
     assert fe_args[1] == "feature_extractor"
     assert fe_args[fe_args.index("--ImageReader.camera_model") + 1] == "SIMPLE_RADIAL"
     assert fe_args[fe_args.index("--ImageReader.single_camera") + 1] == "1"
-    assert fe_args[fe_args.index("--SiftExtraction.peak_threshold") + 1] == "0.004"
+    assert fe_args[fe_args.index("--SiftExtraction.peak_threshold") + 1] == "0.002"
+    assert fe_args[fe_args.index("--SiftExtraction.edge_threshold") + 1] == "16"
     assert fe_args[fe_args.index("--SiftExtraction.max_num_features") + 1] == "8192"
     assert fe_args[fe_args.index("--FeatureExtraction.use_gpu") + 1] == "1"
     assert fe_args[fe_args.index("--FeatureExtraction.gpu_index") + 1] == "0"
@@ -796,18 +797,22 @@ def test_feature_extractor_optical_lock_and_adaptive_matching_routing(
         return MagicMock(returncode=0)
 
     with patch("loom.reconstruction.colmap.run_subprocess", side_effect=_capture):
-        # <= 120 images -> GPU exhaustive_matcher
-        adapter.run_matching(database_path=db_path, num_images=80, gpu_index=0)
+        # <= 150 images (including 130 and 150) -> GPU exhaustive_matcher with guided_matching=1 & max_ratio=0.85
+        adapter.run_matching(database_path=db_path, num_images=150, gpu_index=0)
         assert executed[-1][1] == "exhaustive_matcher"
         assert executed[-1][executed[-1].index("--FeatureMatching.use_gpu") + 1] == "1"
         assert executed[-1][executed[-1].index("--FeatureMatching.gpu_index") + 1] == "0"
+        assert executed[-1][executed[-1].index("--FeatureMatching.guided_matching") + 1] == "1"
+        assert executed[-1][executed[-1].index("--SiftMatching.max_ratio") + 1] == "0.85"
 
-        # > 120 images -> sequential_matcher fallback (overlap=10, quadratic_overlap=1, loop_detection=1)
-        adapter.run_matching(database_path=db_path, num_images=150, gpu_index=0)
+        # > 150 images -> sequential_matcher fallback (overlap=10, quadratic_overlap=1, loop_detection=1)
+        adapter.run_matching(database_path=db_path, num_images=180, gpu_index=0)
         assert executed[-1][1] == "sequential_matcher"
         assert executed[-1][executed[-1].index("--SequentialMatching.overlap") + 1] == "10"
         assert executed[-1][executed[-1].index("--SequentialMatching.quadratic_overlap") + 1] == "1"
         assert executed[-1][executed[-1].index("--SequentialMatching.loop_detection") + 1] == "1"
+        assert executed[-1][executed[-1].index("--FeatureMatching.guided_matching") + 1] == "1"
+        assert executed[-1][executed[-1].index("--SiftMatching.max_ratio") + 1] == "0.85"
 
 
 def test_select_largest_sparse_model_picks_max_registered_views(tmp_path: Path) -> None:
@@ -1029,7 +1034,8 @@ def test_colmap_adapter_turbo_flags(dummy_binary: Path, tmp_path: Path) -> None:
         assert step == "mapper"
         assert cmd[cmd.index("--Mapper.ba_global_max_num_iterations") + 1] == "15"
         assert cmd[cmd.index("--Mapper.ba_local_max_num_iterations") + 1] == "12"
-        assert cmd[cmd.index("--Mapper.min_num_matches") + 1] == "15"
+        assert cmd[cmd.index("--Mapper.min_num_matches") + 1] == "10"
+        assert cmd[cmd.index("--Mapper.init_min_num_inliers") + 1] == "50"
 
     # 3. Stereo fusion in turbo mode
     with patch.object(adapter, "_execute_step") as mock_exec:

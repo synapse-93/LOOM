@@ -70,30 +70,36 @@ def _render_synthetic_sphere_view(
 
 
 def test_mask_depth_map_zeroes_background_and_low_alpha() -> None:
-    """Verify render_alpha>=0.45 protects against gt_mask voids while zeroing low-alpha background,
-    and gt_mask still clips when render_alpha is absent."""
+    """Verify render_alpha>=0.40 protects against gt_mask voids (including gt_mask=None excluded poses)
+    while zeroing low-alpha background, and gt_mask still clips when render_alpha is absent."""
     depth = np.full((4, 4), 1.5, dtype=np.float32)
     mask = np.full((4, 4), 255, dtype=np.uint8)
     mask[0, :] = 0  # simulated noisy isnet dropout on row 0
     alpha = np.full((4, 4), 0.9, dtype=np.float32)
     alpha[:, 0] = 0.2  # low-alpha background column 0
+    alpha[3, 3] = 0.42  # grazing-angle surfel (>= 0.40 threshold)
 
     # With render_alpha provided (default skip_gt_mask_when_alpha_present=True):
-    # row 0 survives because render_alpha=0.9 >= 0.45, while column 0 is strictly zeroed.
-    masked_alpha = mask_depth_map(depth, gt_mask=mask, render_alpha=alpha, alpha_threshold=0.45)
+    # row 0 survives because render_alpha=0.9 >= 0.40, while column 0 is strictly zeroed.
+    masked_alpha = mask_depth_map(depth, gt_mask=mask, render_alpha=alpha, alpha_threshold=0.40)
     assert np.all(masked_alpha[:, 0] == 0.0)
     assert np.all(masked_alpha[:, 1:] == 1.5)
+
+    # Excluded-view all-pose path: gt_mask=None gated solely by render_alpha >= 0.40
+    masked_excluded = mask_depth_map(depth, gt_mask=None, render_alpha=alpha, alpha_threshold=0.40)
+    assert np.all(masked_excluded[:, 0] == 0.0)
+    assert np.all(masked_excluded[:, 1:] == 1.5)
 
     # Without render_alpha: gt_mask==0 strictly zeroes row 0
     masked_gt = mask_depth_map(depth, gt_mask=mask, render_alpha=None)
     assert np.all(masked_gt[0, :] == 0.0)
     assert np.all(masked_gt[1:, :] == 1.5)
 
-    # Verify Phase 4 TSDF defaults (voxel_divisor=320, trunc=2.5, alpha_threshold=0.45)
+    # Verify Milestone 1 TSDF defaults (voxel_divisor=320, trunc=2.5, alpha_threshold=0.40)
     cfg = TsdfExtractionConfig()
     assert cfg.voxel_divisor == 320.0
     assert cfg.trunc_voxel_multiplier == 2.5
-    assert cfg.alpha_threshold == 0.45
+    assert cfg.alpha_threshold == 0.40
 
 
 def test_compute_foreground_bounding_sphere_ignores_outliers() -> None:
@@ -163,6 +169,8 @@ def test_tsdf_mesh_extractor_fuses_synthetic_sphere_into_valid_mesh(tmp_path: Pa
     assert res.mesh_path == out_ply.resolve()
     assert out_ply.is_file()
     assert res.views_fused == len(cam_positions)
+    assert res.total_registered_poses == len(cam_positions)
+    assert res.to_manifest_dict()["total_registered_poses"] == len(cam_positions)
     assert res.vertex_count > 100
     assert res.face_count > 200
     assert np.isclose(res.voxel_length, sphere_r / 32.0)

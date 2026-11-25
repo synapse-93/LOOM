@@ -167,6 +167,11 @@ def test_health_schema_and_cors_headers(tmp_path: Path) -> None:
             assert body["queue_depth"] == 0
             assert body["ready"] is True
 
+            # Verify /api/health alias returns identical HTTP 200 payload
+            api_health = client.get("/api/health")
+            assert api_health.status_code == 200
+            assert api_health.json()["status"] == "ok"
+
             # Verify Vercel preview deployment regex CORS
             preflight = client.options(
                 "/api/reconstruct",
@@ -503,5 +508,59 @@ def test_infer_stage_and_progress_tracks_2dgs_markers() -> None:
 
     p, stage = infer_stage_and_progress("[EXPORT] Validated metric binary STL exported: loom_output.stl", p, stage)
     assert p == 99
+
+
+def test_job_manager_auto_prunes_old_completed_jobs_preserving_active(tmp_path: Path) -> None:
+    """Verify max_retained_jobs prunes oldest completed workspaces on disk while never deleting active jobs."""
+    import os
+    from loom.web.manager import JobManager, _JobRecord
+
+    jobs_root = tmp_path / "pruned_jobs"
+    jobs_root.mkdir(parents=True)
+    manager = JobManager(jobs_root=jobs_root, max_retained_jobs=2)
+
+    # Seed 4 completed job workspaces with staggered mtimes (job_0 oldest .. job_3 newest)
+    created_dirs: dict[str, Path] = {}
+    for idx in range(4):
+        jid = f"done_{idx}"
+        jdir = jobs_root / jid
+        jdir.mkdir()
+        (jdir / "loom_output.stl").write_bytes(b"STL" * 10)
+        ts = 1_700_000_000 + idx * 100
+        os.utime(jdir, (ts, ts))
+        rec = _JobRecord(
+            job_id=jid,
+            filename=f"v{idx}.mp4",
+            job_dir=jdir,
+            video_path=jdir / "input.mp4",
+            target_length_mm=200.0,
+            turbo=False,
+            status="COMPLETED",
+        )
+        manager._jobs[jid] = rec
+        created_dirs[jid] = jdir
+
+    # Seed an actively RUNNING job with an even older mtime -> must NEVER be pruned!
+    active_dir = jobs_root / "active_job"
+    active_dir.mkdir()
+    os.utime(active_dir, (1_600_000_000, 1_600_000_000))
+    manager._jobs["active_job"] = _JobRecord(
+        job_id="active_job",
+        filename="running.mp4",
+        job_dir=active_dir,
+        video_path=active_dir / "input.mp4",
+        target_length_mm=200.0,
+        turbo=False,
+        status="RUNNING",
+    )
+    manager._active_job_id = "active_job"
+
+    pruned = manager._prune_old_jobs()
+    assert len(pruned) == 2
+    assert not created_dirs["done_0"].exists()
+    assert not created_dirs["done_1"].exists()
+    assert created_dirs["done_2"].is_dir()
+    assert created_dirs["done_3"].is_dir()
+    assert active_dir.is_dir()
 
 

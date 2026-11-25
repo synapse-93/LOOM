@@ -20,7 +20,7 @@ class TsdfExtractionConfig:
 
     voxel_divisor: float = 320.0
     trunc_voxel_multiplier: float = 2.5
-    alpha_threshold: float = 0.45
+    alpha_threshold: float = 0.40
     min_surfel_opacity: float = 0.35
     bound_percentile_low: float = 5.0
     bound_percentile_high: float = 95.0
@@ -46,6 +46,7 @@ class TsdfExtractionResult:
     sdf_trunc: float
     bounding_radius: float
     views_fused: int
+    total_registered_poses: int = 0
     bounding_center: tuple[float, float, float] = (0.0, 0.0, 0.0)
     extents: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
@@ -56,6 +57,7 @@ class TsdfExtractionResult:
             "voxel_length": round(float(self.voxel_length), 6),
             "sdf_trunc": round(float(self.sdf_trunc), 6),
             "views_fused": int(self.views_fused),
+            "total_registered_poses": int(self.total_registered_poses or self.views_fused),
             "vertices": int(self.vertex_count),
             "faces": int(self.face_count),
             "extents": [round(float(e), 6) for e in self.extents],
@@ -124,7 +126,7 @@ def mask_depth_map(
     depth_map: np.ndarray,
     gt_mask: Optional[np.ndarray] = None,
     render_alpha: Optional[np.ndarray] = None,
-    alpha_threshold: float = 0.45,
+    alpha_threshold: float = 0.40,
     min_depth: float = 0.05,
     max_depth: Optional[float] = None,
     gt_mask_dilation_kernel: int = 21,
@@ -309,7 +311,12 @@ class TsdfMeshExtractor:
         if views_fused == 0:
             raise RuntimeError("TSDF fusion failed: zero views contained valid masked depth pixels.")
 
-        logger.info("[TSDF] Running Marching Cubes surface extraction...")
+        logger.info(
+            "[TSDF] Fused %d / %d registered poses (alpha_threshold=%.2f); running Marching Cubes surface extraction...",
+            views_fused,
+            n_views,
+            float(self.config.alpha_threshold),
+        )
         mesh = vbg.extract_triangle_mesh().to_legacy()
         if len(mesh.triangles) == 0 or len(mesh.vertices) == 0:
             raise RuntimeError("TSDF Marching Cubes extracted an empty triangle mesh (0 faces).")
@@ -354,6 +361,7 @@ class TsdfMeshExtractor:
             sdf_trunc=sdf_trunc,
             bounding_radius=float(bounding_radius),
             views_fused=views_fused,
+            total_registered_poses=n_views,
             bounding_center=(float(center[0]), float(center[1]), float(center[2])),
             extents=(float(ext[0]), float(ext[1]), float(ext[2])),
         )
@@ -364,13 +372,19 @@ class TsdfMeshExtractor:
         trained_model: Any,
         output_path: Path | str,
     ) -> TsdfExtractionResult:
-        """Render median depth + RGB maps from a trained 2DGS model and fuse into tight TSDF mesh."""
+        """Render median depth + RGB maps from ALL registered poses and fuse into tight TSDF mesh."""
         import torch
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        logger.info("[TSDF] Rendering masked median depth maps across %d valid views...", len(trained_model.views))
+        all_poses = getattr(trained_model, "all_poses", None)
+        n_render_poses = len(all_poses) if all_poses else len(trained_model.views)
+        logger.info(
+            "[TSDF] Rendering masked median depth maps across %d registered poses (%d trained valid views)...",
+            n_render_poses,
+            len(trained_model.views),
+        )
         rendered_depths, rendered_rgbs, rendered_alphas, masks, intrinsics, extrinsics = (
             reconstructor.render_views_for_tsdf(trained_model)
         )

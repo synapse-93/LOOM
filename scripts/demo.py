@@ -59,7 +59,7 @@ def run_demo(
     export_stl: bool = False,
     stl_dir: Path | None = None,
     sample_interval: int = 1,
-    max_frames: int = 75,
+    max_frames: int = 130,
     target_fps: float | None = None,
     sequential: bool = False,
     min_num_pixels: int = 2,
@@ -169,11 +169,22 @@ def run_demo(
             if not video_path.is_file():
                 raise ReconstructionInvalidInputError(f"Input video does not exist: {video_path}")
 
+            effective_max_frames = max_frames
+            if turbo and (max_frames is None or max_frames in (42, 75, 130)):
+                effective_max_frames = 68 if engine == "2dgs" else 65
+            # When explicitly resuming a downstream stage (mask/visual_hull/2dgs/tsdf/export),
+            # preserve cached upstream frames; otherwise enforce max_frames cache hygiene.
+            cache_max_frames = (
+                None
+                if from_stage in ("sfm", "undistort", "mask", "visual_hull", "2dgs", "tsdf", "export")
+                else effective_max_frames
+            )
             pipeline_manifest = prepare_workspace(
                 workspace=workspace,
                 video_path=video_path,
                 engine=engine,
                 turbo=turbo,
+                max_frames=cache_max_frames,
             )
             if from_stage is not None:
                 logger.info("[RESUME] Invalidating pipeline manifest from stage '%s' onward.", from_stage)
@@ -198,7 +209,7 @@ def run_demo(
                 from loom.config.models import VideoConfig
 
                 effective_max_frames = max_frames
-                if turbo and (max_frames is None or max_frames in (42, 75)):
+                if turbo and (max_frames is None or max_frames in (42, 75, 130)):
                     effective_max_frames = 68 if engine == "2dgs" else 65
                 if engine == "2dgs":
                     effective_max_dim = min(max_image_size, 720 if turbo else 960)
@@ -277,8 +288,8 @@ def run_demo(
                     if candidate_sparse.is_dir():
                         shutil.rmtree(candidate_sparse, ignore_errors=True)
 
-                    # Adaptive GPU matching: exhaustive <= 120 frames, sequential > 120 frames
-                    is_seq = len(frame_files) > 120
+                    # Adaptive GPU matching: exhaustive <= 150 frames, sequential > 150 frames
+                    is_seq = len(frame_files) > 150
                     matching_mode = "sequential" if is_seq else "exhaustive"
                     job_cfg = ReconstructionJobConfig(
                         workspace_dir=workspace,
@@ -1168,8 +1179,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--max-frames",
         type=int,
-        default=75,
-        help="Maximum number of frames to extract from video (default: 75).",
+        default=130,
+        help="Maximum number of frames to extract from video (default: 130).",
     )
     parser.add_argument(
         "--target-fps",
@@ -1269,7 +1280,7 @@ def main(argv: list[str] | None = None) -> int:
             args.export_stl = True
         if args.base_z is None and args.engine == "colmap":
             args.base_z = 0.005
-        if args.max_frames in (42, 65, 75):
+        if args.max_frames in (42, 65, 75, 130):
             args.max_frames = 68
 
     if args.engine == "2dgs" and not args.mesh_only:

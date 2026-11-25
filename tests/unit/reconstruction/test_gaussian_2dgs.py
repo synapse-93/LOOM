@@ -67,6 +67,7 @@ def test_2dgs_config_enforces_8gb_vram_budgets() -> None:
     assert std.lambda_normal == 0.05
     assert std.lambda_normal_final == 0.08
     assert std.lambda_dist == 0.01
+    assert std.min_opacity == 0.01
 
     # Verify halfway silhouette decay (0.5 -> 0.05) and final-30% normal ramp (0.05 -> 0.08)
     assert np.isclose(scheduled_lambda_mask(1, std), 0.5)
@@ -307,6 +308,18 @@ def test_load_training_views_excludes_abnormal_masks_with_20_view_fallback(tmp_p
     i2, m2, s2 = _build_scene(tmp_path / "case_fallback", n_good=10, n_empty=3, n_full=0)
     views2, _, _ = reconstructor.load_training_views(i2, m2, s2)
     assert len(views2) == 13
+
+    # All-pose TSDF loader must retain ALL 27 registered poses in case_filter while assigning
+    # mask_u8=None to excluded views so TSDF relies solely on 3D-consistent render_alpha.
+    valid_names = [v.name for v in views1]
+    all_poses = reconstructor.load_all_registered_poses(i1, m1, s1, valid_view_names=valid_names)
+    assert len(all_poses) == 27
+    excluded_poses = [p for p in all_poses if p.name not in set(valid_names)]
+    valid_poses = [p for p in all_poses if p.name in set(valid_names)]
+    assert len(excluded_poses) == 5
+    assert len(valid_poses) == 22
+    assert all(p.mask_u8 is None for p in excluded_poses)
+    assert all(p.mask_u8 is not None for p in valid_poses)
 
 
 def test_gsplat_153_cuda_shape_smoke() -> None:

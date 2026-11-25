@@ -11,19 +11,22 @@
               │
               ▼
  1. Video Ingest & Blur Filtering        src/loom/video/frames.py
-    • Evenly strided keyframe sampling (68 frames in --turbo)
+    • Evenly strided keyframe sampling (130 standard / 68 in --turbo)
     • 8 GB VRAM cap: max(W, H) = 960 px standard / 720 px in --turbo (cv2.INTER_AREA)
     • Laplacian sharpness gating (variance >= 18.0)
               │
               ▼
  2. Sparse SfM, Circuit Breaker          src/loom/reconstruction/colmap.py
     & Image Undistortion                 src/loom/pipeline/manifest.py
-    • Cache hygiene via pipeline_manifest.json (fast video SHA-256 + resolution check;
+    • Cache hygiene via pipeline_manifest.json (fast video SHA-256 + max_frames + resolution;
       wipes stale extracted_frames/, images/, database.db, sparse/, dense/, masks/, debug_*)
     • COLMAP 4.2.0 CUDA SIFT feature_extractor locked to single SIMPLE_RADIAL camera
-      (--ImageReader.single_camera 1, --SiftExtraction.peak_threshold 0.004, max 8192)
-    • Adaptive GPU matching: exhaustive_matcher (<= 120 images), sequential_matcher (> 120)
-    • 16-thread mapper + largest numeric sparse/* model selection (asserting num_cameras == 1)
+      (--ImageReader.single_camera 1, --SiftExtraction.peak_threshold 0.002,
+      --SiftExtraction.edge_threshold 16, max 8192)
+    • Adaptive GPU matching: exhaustive_matcher (<= 150 images), sequential_matcher (> 150)
+      with --FeatureMatching.guided_matching 1 and --SiftMatching.max_ratio 0.85
+    • 16-thread mapper (--Mapper.min_num_matches 10, --Mapper.init_min_num_inliers 50)
+      + largest numeric sparse/* model selection (asserting num_cameras == 1)
     • SfM Circuit Breaker: aborts with RuntimeError if registered views < 75% of keyframes
     • colmap image_undistorter on winning model -> dense/images/ + dense/sparse/ (PINHOLE)
               │
@@ -64,14 +67,15 @@
       + (step >= 1500) w_norm(step)*(1 - cos(render_n, surf_n))*mask (0.05 -> 0.08 final 30%)
       + 0.01*render_distort*mask
     • Adaptive densify/prune every 250 steps via info["gradient_2dgs"] (NDC-scaled)
-      capped at max_gaussians = 150,000; opacity reset at 3000 with post-reset prune cooldown
+      capped at max_gaussians = 150,000, min_opacity = 0.01; opacity reset at 3000 with cooldown
     • Exports 3 4-panel audit strips (<workspace>/debug_2dgs/view_{0,mid,last}.png:
       GT Masked RGB | Rendered RGB | Median Depth | Normals)
               │
               ▼
  6. Masked TSDF Fusion & Marching Cubes  src/loom/reconstruction/tsdf_mesh.py
-    • Renders median depth (depth_mode="median") + RGB across manifest valid views
-    • Filters background via 3D-consistent render_alpha >= 0.45 (skipping noisy 2D gt_mask
+    • Renders median depth (depth_mode="median") + RGB across ALL registered undistorted poses
+      (immediate per-view GPU->CPU transfer under torch.no_grad(); gt_mask=None on excluded poses)
+    • Filters background via 3D-consistent render_alpha >= 0.40 (skipping noisy 2D gt_mask
       clipping when render_alpha is present so mask dropouts never re-punch wall voids)
     • Tight surfel bounding sphere (opacity > 0.35, DBSCAN + 5th-95th pct, <= 1.35*object_radius):
       voxel_length = max(tight_radius / 320, 1e-4), sdf_trunc = 2.5 * voxel_length,

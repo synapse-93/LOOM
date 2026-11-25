@@ -4,6 +4,39 @@ This log records chronological development iterations. Every agent completing me
 
 ---
 
+## Iteration 035 — Milestone 1: 130-Keyframe Low-Texture SfM, All-Pose TSDF Fusion, Worker SSD Pruning & 1-Command Launcher
+- **Date**: 2026-11-25
+- **Milestone**: Milestone 1 Complete (279/279 Tests Passing + `cube.mp4` 130/130 SfM & `bottle.mp4` End-to-End Watertight STL Verified)
+- **Changes Implemented**:
+  - **Sweet-Spot Keyframe Density (`130`) & Low-Texture COLMAP 4.2.0 Hardening (`src/loom/reconstruction/colmap.py`, `src/loom/config/models.py`, `src/loom/video/frames.py`, `src/loom/pipeline/manifest.py`, `scripts/demo.py`)**:
+    - Lowered `--SiftExtraction.peak_threshold` to `0.002` and added `--SiftExtraction.edge_threshold 16`.
+    - Raised GPU `exhaustive_matcher` cutoff to `<= 150` images with `--FeatureMatching.guided_matching 1` and `--SiftMatching.max_ratio 0.85` (verified against host COLMAP 4.2.0 `-h`).
+    - Lowered `--Mapper.min_num_matches` to `10` and added `--Mapper.init_min_num_inliers 50` (verified against host COLMAP 4.2.0 `-h`).
+    - Updated default `max_frames` to `130` across `demo.py`, `VideoConfig`, and `FrameExtractor`, and added `PipelineManifest.max_frames` with automatic cache invalidation in `prepare_workspace()`.
+  - **Void-Free All-Pose TSDF Rendering (`src/loom/reconstruction/gaussian_2dgs.py`, `src/loom/reconstruction/tsdf_mesh.py`)**:
+    - Lowered `Gaussian2DGSConfig.min_opacity` from `0.02` to `0.01` to preserve thin edges and darker faces during densification.
+    - Added `RenderPose` and `Gaussian2DGSReconstructor.load_all_registered_poses()` so `render_views_for_tsdf()` renders median Z-depth, RGB, and alpha across **ALL** registered undistorted COLMAP poses (immediately moving each view to CPU NumPy under `torch.no_grad()` to keep VRAM flat, passing `gt_mask=None` on excluded views).
+    - Lowered `TsdfExtractionConfig.alpha_threshold` from `0.45` to `0.40` and added `total_registered_poses` logging & manifest telemetry (`views_fused / total_registered_poses`).
+  - **Production Worker Hygiene & 1-Command Launcher (`src/loom/web/app.py`, `src/loom/web/manager.py`, `scripts/start_loom.sh`)**:
+    - Added `/api/health` alias alongside `/health`.
+    - Added `max_retained_jobs: int = 5` and `_prune_old_jobs()` (plus `JobManager` alias) in `src/loom/web/manager.py` to prune oldest completed/failed job workspaces on disk beyond the newest 5 while never deleting active/queued jobs (`[CLEANUP] Pruned old job workspace ...`).
+    - Created executable `scripts/start_loom.sh` verifying `.venv312` + CUDA, starting `serve_worker.py`, polling `/api/health` (20s timeout), auto-launching `cloudflared` quick tunnel if installed (or clean local-only fallback), and trapping `SIGINT`/`SIGTERM`/`EXIT` for zero-orphan shutdown.
+  - **Unit Tests**:
+    - Updated `test_manifest.py`, `test_colmap_adapter.py`, `test_gaussian_2dgs.py`, `test_tsdf_mesh.py`, and `test_api.py`.
+- **Verification**:
+  - `.venv312/bin/pytest tests/ -q`: **278 passed, 1 skipped** (sandboxed) + `test_gsplat_153_cuda_shape_smoke PASSED` on RTX 4060 (**279/279 total**).
+  - `bash -n scripts/start_loom.sh` & `chmod +x`: passed.
+  - **`cube.mp4` SfM Exit Gate (`outputs/rewrite_cube_test`, `--stop-after sfm`)**: **`130 / 130` views registered (`100.0%`)**, `num_cameras = 1`, **`33,418` sparse points** in a single unified `sparse/0` model (up from `39/75 = 52.0%` across 5 islands).
+  - **`bottle.mp4` End-to-End Exit Gate (`outputs/rewrite_bottle_test`, `--target-length 120.0 --export-stl`)**:
+    - Auto-invalidated stale 74-frame cache (`max_frames: None -> 130`), extracted `129` frames.
+    - SfM: **`129 / 129` (`100.0%`)**, `num_cameras = 1`, `57,416` sparse pts.
+    - Masking: **`129 / 129` valid views** (`17.3%` median cov), Visual Hull: `57,416 -> 6,791` pts (`object_radius = 1.1420`).
+    - 2DGS (7,000 iters): `6,791 -> 22,282` surfels, **`final_loss = 0.0091`**, **peak VRAM `240.0 MiB`** (`119.54s`).
+    - All-Pose TSDF (`129 / 129` poses fused, `voxel=0.00451`, `alpha>=0.40`): **`557,539` verts / `1,088,268` faces** (`5.68s`).
+    - Export (`loom_output.stl`): **`92,600` verts / `187,036` faces**, **`PrintabilityGate PASSED`** (`watertight=True`, `manifold=True`, `0` boundary/non-manifold edges, `volume = 13.33 cm³`, AABB `[52.101, 47.453, 120.000] mm`, OBB `122.0 × 42.3 × 41.5 mm`, `Z_min = 0.000000 mm`, exact `9,351,884` bytes).
+
+---
+
 ## Iteration 034 — Architectural Rewrite Phase 4 (Final): Void-Elimination 2DGS/TSDF, Guaranteed Watertight Export & `.venv312` FastAPI Worker
 - **Date**: 2026-11-22
 - **Milestone**: All 4 Architectural Rewrite Phases Complete (277/277 Tests Passing + End-to-End Watertight `box.mp4` STL Verified)

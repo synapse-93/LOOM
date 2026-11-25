@@ -148,7 +148,7 @@ class FrameExtractor:
             fps = float(fps) if fps > 0 else 30.0
             source_frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-            # Determine max_frames (default to 68 for turbo mode, 75 for standard video inputs)
+            # Determine max_frames (default to 68 for turbo mode, 130 for standard video inputs)
             is_turbo = getattr(self.config, "turbo", False)
             configured_max = getattr(self.config, "max_frames", None)
             if configured_max is not None and configured_max > 0:
@@ -156,7 +156,7 @@ class FrameExtractor:
             elif is_turbo:
                 max_frames = 68
             else:
-                max_frames = 75
+                max_frames = 130
 
             configured_target_dim = getattr(self.config, "target_max_dimension", None)
             if configured_target_dim is not None and configured_target_dim > 0:
@@ -376,7 +376,7 @@ def extract_keyframes(
     Returns:
         FrameSetArtifact containing extracted frames.
     """
-    effective_max = max_frames if max_frames is not None else (68 if turbo else 75)
+    effective_max = max_frames if max_frames is not None else (68 if turbo else 130)
     effective_dim = target_max_dimension if target_max_dimension is not None else 960
     cfg = VideoConfig(
         max_frames=effective_max,
